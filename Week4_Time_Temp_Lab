@@ -1,0 +1,60 @@
+import board
+import busio
+import adafruit_ssd1306
+from PIL import Image, ImageDraw, ImageFont
+from datetime import datetime
+import subprocess 
+import time
+
+
+# Create the I2C interface
+i2c = busio.I2C(board.SCL, board.SDA)
+# Create the SSD1306 OLED class
+oled = adafruit_ssd1306.SSD1306_I2C(128, 64, i2c)
+
+# Clear the display (0 for pixel off/black, 255 for pixel on/white)
+oled.fill(0)
+oled.show()
+
+# Create a blank image for drawing (mode '1' for 1-bit color/black & white)
+image = Image.new("1", (oled.width, oled.height))
+draw = ImageDraw.Draw(image)
+
+# Draw the text
+# syntax: draw.text((x, y), text, font=font, fill=255)
+font = ImageFont.load_default()
+#draw.text((40, 0), "Hey", font=font, fill=255)
+#draw.text((80, 30), "There", font=font, fill=255)
+
+#show date time
+
+emoji_font_path = "NotoEmoji-VariableFont_wght.ttf"  
+emoji_font = ImageFont.truetype(emoji_font_path, 15) 
+
+
+while True:
+    # clear image buffer
+    draw.rectangle((0, 0, oled.width, oled.height), outline=0, fill=0)
+
+    # update time
+    current_time = datetime.now().strftime("%H:%M:%S")
+    draw.text((40, 0), current_time, font=font, fill=255)
+
+    # temperature (optional: update each loop)
+    curr_temp = subprocess.run(
+        "vcgencmd measure_temp",
+        shell=True,
+        capture_output=True,
+        text=True
+    )
+    draw.text((40, 30), curr_temp.stdout.strip(), font=font, fill=255)
+
+    # emojis
+    draw.text((20, 0), "\U0001F319", font=emoji_font, fill=255)
+    draw.text((20, 30), "\U0001F321", font=emoji_font, fill=255)
+
+    # push to OLED
+    oled.image(image)
+    oled.show()
+
+    time.sleep(1)
