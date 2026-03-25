@@ -14,8 +14,9 @@ from pynput.mouse import Button, Controller as MouseController
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
-# Mouse controller (pynput — much faster than pyautogui on Linux)
+    # Mouse controller (pynput — much faster than pyautogui on Linux)
 mouse = MouseController()
+last_mouse_pos = None  # tracks previous position for relative movement
 
 # Global variables
 COUNTER, FPS = 0, 0
@@ -78,6 +79,7 @@ def run(model: str, num_hands: int,
     # State
     was_fist = False
     mouse_held = False
+    global last_mouse_pos
     ily_start_time = None
     TRACKING_ENABLED = False
     ILY_HOLD_SECONDS = 3
@@ -206,8 +208,14 @@ def run(model: str, num_hands: int,
                 raw_y = int(palm.y * screen_h)
                 smooth_x, smooth_y = smooth_position(raw_x, raw_y)
 
-                # Move cursor with pynput (fast, no sleep/delay)
-                mouse.position = (smooth_x, smooth_y)
+                # Move cursor using relative movement (fixes Linux/Pi absolute position bug)
+                if last_mouse_pos is None:
+                    last_mouse_pos = (smooth_x, smooth_y)
+                dx = smooth_x - last_mouse_pos[0]
+                dy = smooth_y - last_mouse_pos[1]
+                if dx != 0 or dy != 0:
+                    mouse.move(dx, dy)
+                last_mouse_pos = (smooth_x, smooth_y)
 
                 cursor_x = int(palm.x * frame_w)
                 cursor_y = int(palm.y * frame_h)
