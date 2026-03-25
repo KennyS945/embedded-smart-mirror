@@ -11,3 +11,7 @@ curl -o hand_landmarker.task https://storage.googleapis.com/mediapipe-models/han
 
 pip install mediapipe opencv-python pynput
 curl -o hand_landmarker.task https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task
+
+
+/usr/local/bin/python3.11 -m venv ~/myenv311
+source ~/myenv311/bin/activate
