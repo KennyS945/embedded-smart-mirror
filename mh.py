@@ -183,8 +183,8 @@ def run(model: str, num_hands: int,
                         if TRACKING_ENABLED:
                             # Snap cursor to palm position the moment tracking turns on
                             palm = hand_landmarks[9]
-                            snap_x = int(palm.x * screen_w)
-                            snap_y = int(palm.y * screen_h)
+                            snap_x = int(palm.x * 1920)
+                            snap_y = int(palm.y * 1080)
                             mouse.position = (snap_x, snap_y)
                             last_mouse_pos = (snap_x, snap_y)
                         else:
