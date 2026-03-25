@@ -61,7 +61,6 @@ DETECTION_RESULT = None
 position_buffer = []
 root = None
 
-
 # =========================
 # API CACHE
 # =========================
@@ -96,6 +95,7 @@ def fetch_news():
         data = r.json()
         articles = data.get("articles", [])
         results = []
+
         for a in articles:
             title = a.get("title", "No title")
             source = a.get("source", {}).get("name", "")
@@ -115,6 +115,7 @@ def fetch_news():
 def fetch_stocks():
     global _stock_cache
     results = []
+
     for sym in STOCK_SYMBOLS:
         try:
             ticker = yf.Ticker(sym)
@@ -131,6 +132,7 @@ def fetch_stocks():
             results.append(f"{sym}  ${price:.2f}  {arrow}{abs(change):.2f} ({abs(pct):.2f}%)")
         except Exception:
             results.append(f"{sym}: N/A")
+
     _stock_cache = results
 
 
@@ -145,6 +147,7 @@ def smooth_position(x, y):
     position_buffer.append((x, y))
     if len(position_buffer) > SMOOTHING_WINDOW:
         position_buffer.pop(0)
+
     avg_x = int(sum(px for px, _ in position_buffer) / len(position_buffer))
     avg_y = int(sum(py for _, py in position_buffer) / len(position_buffer))
     return avg_x, avg_y
@@ -213,7 +216,6 @@ def run_hand_tracking():
 
             hand_landmarks = DETECTION_RESULT.hand_landmarks[0]
 
-            # Palm point drives cursor
             palm = hand_landmarks[9]
             raw_x = int(palm.x * screen_w)
             raw_y = int(palm.y * screen_h)
@@ -224,7 +226,6 @@ def run_hand_tracking():
             except Exception as e:
                 print(f"Mouse move error: {e}")
 
-            # Fist = hold left click
             fingertips = [8, 12, 16, 20]
             knuckles = [6, 10, 14, 18]
             is_fist = all(
@@ -310,6 +311,7 @@ class DraggableCard(tk.Canvas):
 
         self._drag_ox = 0
         self._drag_oy = 0
+        self._is_dragging = False
 
         self.bind("<ButtonPress-1>", self._on_press)
         self.bind("<B1-Motion>", self._on_drag)
@@ -320,11 +322,15 @@ class DraggableCard(tk.Canvas):
     def _on_press(self, e):
         self._drag_ox = e.x
         self._drag_oy = e.y
-        self.lift()
+        self._is_dragging = True
+        self.tk.call("raise", self._w)
         self.itemconfigure(self._bg_id, outline="#00ff00")
-        self.update_idletasks()
 
     def _on_drag(self, e):
+        if not self._is_dragging:
+            self._is_dragging = True
+            self.itemconfigure(self._bg_id, outline="#00ff00")
+
         parent = self.master
         pw = parent.winfo_width()
         ph = parent.winfo_height()
@@ -339,8 +345,8 @@ class DraggableCard(tk.Canvas):
         self.place(x=nx, y=ny)
 
     def _on_release(self, e):
+        self._is_dragging = False
         self.itemconfigure(self._bg_id, outline="white")
-        self.update_idletasks()
 
     def _resolve_collisions(self, nx, ny):
         for other in DraggableCard._all_cards:
@@ -375,6 +381,7 @@ class DraggableCard(tk.Canvas):
         parent = self.master
         pw = parent.winfo_width()
         ph = parent.winfo_height()
+
         nx = max(WIDGET_PAD, min(pw - self.card_w - WIDGET_PAD, nx))
         ny = max(WIDGET_PAD, min(ph - self.card_h - WIDGET_PAD, ny))
         return nx, ny
@@ -469,6 +476,7 @@ class StocksCard(DraggableCard):
     def __init__(self, parent, x, y):
         super().__init__(parent, width=360, height=155, title="Stocks")
         self._line_ids = []
+
         for i in range(len(STOCK_SYMBOLS)):
             tid = self.create_text(
                 20, 48 + i * 34,
@@ -533,12 +541,14 @@ def main():
 
     screen_w = root.winfo_screenwidth()
     screen_h = root.winfo_screenheight()
+
     root.geometry(f"{screen_w}x{screen_h}+0+0")
     root.resizable(False, False)
     root.attributes("-fullscreen", True)
 
     root.bind("<Escape>", close_app)
     root.bind("q", close_app)
+    root.protocol("WM_DELETE_WINDOW", close_app)
 
     signal.signal(signal.SIGINT, handle_exit)
 
