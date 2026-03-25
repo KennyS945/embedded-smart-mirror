@@ -9,6 +9,5 @@ curl -o hand_landmarker.task https://storage.googleapis.com/mediapipe-models/han
 
 
 
-pip install opencv-python mediapipe pyautogui
-sudo apt install python3-xlib scrot
-python3 hand_mouse.py --cameraId 0 --frameWidth 640 --frameHeight 480
+pip install mediapipe opencv-python pynput
+curl -o hand_landmarker.task https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task
