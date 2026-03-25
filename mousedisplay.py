@@ -1,5 +1,7 @@
 import os
 import time
+import signal
+import sys
 import threading
 import tkinter as tk
 from datetime import datetime
@@ -26,21 +28,19 @@ CITY = "Syracuse"
 STOCK_SYMBOLS = ["AAPL", "GOOGL", "SPY"]
 
 WEATHER_REFRESH_MS = 10 * 60 * 1000
-NEWS_REFRESH_MS    = 15 * 60 * 1000
-NEWS_CYCLE_MS      = 7 * 1000
-STOCK_REFRESH_MS   = 5 * 60 * 1000
-CLOCK_REFRESH_MS   = 1000
+NEWS_REFRESH_MS = 15 * 60 * 1000
+NEWS_CYCLE_MS = 7 * 1000
+STOCK_REFRESH_MS = 5 * 60 * 1000
+CLOCK_REFRESH_MS = 1000
 
-BG_COLOR    = "black"
-BOX_COLOR   = "#1c1c1e"
-BOX_OUTLINE = "#2f2f2f"
-FG_COLOR    = "white"
-DIM_COLOR   = "#888888"
+BG_COLOR = "black"
+BOX_COLOR = "#1c1c1e"
+FG_COLOR = "white"
+DIM_COLOR = "#888888"
 
-FONT_TITLE    = ("Arial", 14, "bold")
-FONT_BODY     = ("Arial", 13)
-FONT_COMPACT  = ("Arial", 12)
-FONT_HEADLINE = ("Arial", 12)
+FONT_TITLE = ("Arial", 14, "bold")
+FONT_BODY = ("Arial", 13)
+FONT_COMPACT = ("Arial", 12)
 
 WIDGET_PAD = 10
 
@@ -59,13 +59,16 @@ pyautogui.PAUSE = 0
 running = True
 DETECTION_RESULT = None
 position_buffer = []
+root = None
+
 
 # =========================
 # API CACHE
 # =========================
 _weather_cache = "Loading..."
-_news_cache    = []
-_stock_cache   = ["Loading..." for _ in STOCK_SYMBOLS]
+_news_cache = [{"title": "Loading...", "source": "", "pub": ""}]
+_stock_cache = ["Loading..." for _ in STOCK_SYMBOLS]
+
 
 def fetch_weather():
     global _weather_cache
@@ -82,6 +85,7 @@ def fetch_weather():
         _weather_cache = f"{temp:.0f}°F  {desc}"
     except Exception:
         _weather_cache = "Weather N/A"
+
 
 def fetch_news():
     global _news_cache
@@ -102,9 +106,11 @@ def fetch_news():
             except Exception:
                 pub_str = ""
             results.append({"title": title, "source": source, "pub": pub_str})
+
         _news_cache = results if results else [{"title": "News unavailable", "source": "", "pub": ""}]
     except Exception:
         _news_cache = [{"title": "News unavailable", "source": "", "pub": ""}]
+
 
 def fetch_stocks():
     global _stock_cache
@@ -127,8 +133,10 @@ def fetch_stocks():
             results.append(f"{sym}: N/A")
     _stock_cache = results
 
+
 def bg(fn):
     threading.Thread(target=fn, daemon=True).start()
+
 
 # =========================
 # HAND HELPERS
@@ -141,11 +149,16 @@ def smooth_position(x, y):
     avg_y = int(sum(py for _, py in position_buffer) / len(position_buffer))
     return avg_x, avg_y
 
+
 def run_hand_tracking():
     global running, DETECTION_RESULT
 
-    screen_w, screen_h = pyautogui.size()
-    print(f"Screen size: {screen_w}x{screen_h}")
+    try:
+        screen_w, screen_h = pyautogui.size()
+        print(f"Screen size: {screen_w}x{screen_h}")
+    except Exception as e:
+        print(f"Unable to get screen size: {e}")
+        return
 
     cap = cv2.VideoCapture(CAMERA_ID)
     if not cap.isOpened():
@@ -161,17 +174,22 @@ def run_hand_tracking():
         global DETECTION_RESULT
         DETECTION_RESULT = result
 
-    base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
-    options = vision.HandLandmarkerOptions(
-        base_options=base_options,
-        running_mode=vision.RunningMode.LIVE_STREAM,
-        num_hands=1,
-        min_hand_detection_confidence=0.5,
-        min_hand_presence_confidence=0.5,
-        min_tracking_confidence=0.5,
-        result_callback=save_result,
-    )
-    detector = vision.HandLandmarker.create_from_options(options)
+    try:
+        base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
+        options = vision.HandLandmarkerOptions(
+            base_options=base_options,
+            running_mode=vision.RunningMode.LIVE_STREAM,
+            num_hands=1,
+            min_hand_detection_confidence=0.5,
+            min_hand_presence_confidence=0.5,
+            min_tracking_confidence=0.5,
+            result_callback=save_result,
+        )
+        detector = vision.HandLandmarker.create_from_options(options)
+    except Exception as e:
+        print(f"Failed to load MediaPipe model: {e}")
+        cap.release()
+        return
 
     try:
         while running and cap.isOpened():
@@ -195,7 +213,7 @@ def run_hand_tracking():
 
             hand_landmarks = DETECTION_RESULT.hand_landmarks[0]
 
-            # Move cursor using palm landmark
+            # Palm point drives cursor
             palm = hand_landmarks[9]
             raw_x = int(palm.x * screen_w)
             raw_y = int(palm.y * screen_h)
@@ -206,7 +224,7 @@ def run_hand_tracking():
             except Exception as e:
                 print(f"Mouse move error: {e}")
 
-            # Fist = hold left click for dragging
+            # Fist = hold left click
             fingertips = [8, 12, 16, 20]
             knuckles = [6, 10, 14, 18]
             is_fist = all(
@@ -226,27 +244,31 @@ def run_hand_tracking():
 
     except Exception as e:
         print(f"Hand tracking crashed: {e}")
-
     finally:
         try:
             pyautogui.mouseUp()
         except Exception:
             pass
-        detector.close()
+        try:
+            detector.close()
+        except Exception:
+            pass
         cap.release()
+
 
 # =========================
 # ROUNDED RECTANGLE HELPER
 # =========================
 def rounded_rect_points(x1, y1, x2, y2, r=30):
     return [
-        x1+r, y1,  x2-r, y1,
-        x2,   y1,  x2,   y1+r,
-        x2,   y2-r, x2,  y2,
-        x2-r, y2,  x1+r, y2,
-        x1,   y2,  x1,   y2-r,
-        x1,   y1+r, x1,  y1
+        x1 + r, y1, x2 - r, y1,
+        x2, y1, x2, y1 + r,
+        x2, y2 - r, x2, y2,
+        x2 - r, y2, x1 + r, y2,
+        x1, y2, x1, y2 - r,
+        x1, y1 + r, x1, y1
     ]
+
 
 # =========================
 # DRAGGABLE CARD BASE
@@ -257,15 +279,19 @@ class DraggableCard(tk.Canvas):
     def __init__(self, parent, width, height, title, **kw):
         super().__init__(
             parent,
-            width=width, height=height,
-            bg=BG_COLOR, highlightthickness=0, bd=0,
+            width=width,
+            height=height,
+            bg=BG_COLOR,
+            highlightthickness=0,
+            bd=0,
             **kw
         )
+
         self.card_w = width
         self.card_h = height
 
         self._bg_id = self.create_polygon(
-            rounded_rect_points(4, 4, width-4, height-4, r=28),
+            rounded_rect_points(4, 4, width - 4, height - 4, r=28),
             smooth=True,
             splinesteps=36,
             fill=BOX_COLOR,
@@ -275,8 +301,11 @@ class DraggableCard(tk.Canvas):
 
         if title:
             self.create_text(
-                20, 20, text=title,
-                fill=DIM_COLOR, font=FONT_TITLE, anchor="nw"
+                20, 20,
+                text=title,
+                fill=DIM_COLOR,
+                font=FONT_TITLE,
+                anchor="nw"
             )
 
         self._drag_ox = 0
@@ -327,12 +356,13 @@ class DraggableCard(tk.Canvas):
             overlap_y = ny < oy + oh + WIDGET_PAD and ny + self.card_h + WIDGET_PAD > oy
 
             if overlap_x and overlap_y:
-                push_left  = (nx + self.card_w + WIDGET_PAD) - ox
+                push_left = (nx + self.card_w + WIDGET_PAD) - ox
                 push_right = (ox + ow + WIDGET_PAD) - nx
-                push_up    = (ny + self.card_h + WIDGET_PAD) - oy
-                push_down  = (oy + oh + WIDGET_PAD) - ny
+                push_up = (ny + self.card_h + WIDGET_PAD) - oy
+                push_down = (oy + oh + WIDGET_PAD) - ny
 
                 min_push = min(push_left, push_right, push_up, push_down)
+
                 if min_push == push_left:
                     nx = ox - self.card_w - WIDGET_PAD
                 elif min_push == push_right:
@@ -349,6 +379,7 @@ class DraggableCard(tk.Canvas):
         ny = max(WIDGET_PAD, min(ph - self.card_h - WIDGET_PAD, ny))
         return nx, ny
 
+
 # =========================
 # DATE / TIME / WEATHER CARD
 # =========================
@@ -356,8 +387,11 @@ class DateTimeWeatherCard(DraggableCard):
     def __init__(self, parent, x, y):
         super().__init__(parent, width=480, height=80, title="")
         self._line = self.create_text(
-            240, 40, text="...",
-            fill=FG_COLOR, font=FONT_BODY, anchor="center"
+            240, 40,
+            text="...",
+            fill=FG_COLOR,
+            font=FONT_BODY,
+            anchor="center"
         )
         self.place(x=x, y=y)
         self._tick()
@@ -376,6 +410,7 @@ class DateTimeWeatherCard(DraggableCard):
         bg(fetch_weather)
         self.after(WEATHER_REFRESH_MS, self.refresh_weather)
 
+
 # =========================
 # NEWS CARD
 # =========================
@@ -385,17 +420,26 @@ class NewsCard(DraggableCard):
         self._idx = 0
 
         self._source_id = self.create_text(
-            24, 48, text="",
-            fill=DIM_COLOR, font=("Arial", 11), anchor="nw"
+            24, 48,
+            text="",
+            fill=DIM_COLOR,
+            font=("Arial", 11),
+            anchor="nw"
         )
         self._pub_id = self.create_text(
-            24, 66, text="",
-            fill=DIM_COLOR, font=("Arial", 11), anchor="nw"
+            24, 66,
+            text="",
+            fill=DIM_COLOR,
+            font=("Arial", 11),
+            anchor="nw"
         )
         self._headline_id = self.create_text(
-            24, 90, text="Loading...",
-            fill=FG_COLOR, font=("Arial", 14, "bold"),
-            anchor="nw", width=440
+            24, 90,
+            text="Loading...",
+            fill=FG_COLOR,
+            font=("Arial", 14, "bold"),
+            anchor="nw",
+            width=440
         )
 
         self.place(x=x, y=y)
@@ -417,6 +461,7 @@ class NewsCard(DraggableCard):
             self._idx += 1
         self.after(NEWS_CYCLE_MS, self._cycle)
 
+
 # =========================
 # STOCKS CARD
 # =========================
@@ -426,11 +471,15 @@ class StocksCard(DraggableCard):
         self._line_ids = []
         for i in range(len(STOCK_SYMBOLS)):
             tid = self.create_text(
-                20, 48 + i * 34, text="Loading...",
-                fill=FG_COLOR, font=FONT_COMPACT,
-                anchor="nw", width=320
+                20, 48 + i * 34,
+                text="Loading...",
+                fill=FG_COLOR,
+                font=FONT_COMPACT,
+                anchor="nw",
+                width=320
             )
             self._line_ids.append(tid)
+
         self.place(x=x, y=y)
         self._refresh()
 
@@ -452,37 +501,62 @@ class StocksCard(DraggableCard):
         if any("Loading" in s for s in _stock_cache):
             self.after(2000, self._apply)
 
+
+# =========================
+# EXIT HANDLERS
+# =========================
+def close_app(event=None):
+    global running, root
+    running = False
+    try:
+        if root is not None:
+            root.quit()
+            root.destroy()
+    except Exception:
+        pass
+
+
+def handle_exit(sig, frame):
+    close_app()
+    sys.exit(0)
+
+
 # =========================
 # MAIN WINDOW
 # =========================
-root = tk.Tk()
-root.title("Smart Mirror Dashboard")
-root.configure(bg=BG_COLOR)
+def main():
+    global root
 
-screen_w = root.winfo_screenwidth()
-screen_h = root.winfo_screenheight()
-root.geometry(f"{screen_w}x{screen_h}+0+0")
-root.resizable(False, False)
-root.attributes("-fullscreen", True)
+    root = tk.Tk()
+    root.title("Smart Mirror Dashboard")
+    root.configure(bg=BG_COLOR)
 
-def close_app(event=None):
-    global running
-    running = False
-    root.destroy()
+    screen_w = root.winfo_screenwidth()
+    screen_h = root.winfo_screenheight()
+    root.geometry(f"{screen_w}x{screen_h}+0+0")
+    root.resizable(False, False)
+    root.attributes("-fullscreen", True)
 
-root.bind("<Escape>", close_app)
+    root.bind("<Escape>", close_app)
+    root.bind("q", close_app)
 
-canvas = tk.Frame(root, bg=BG_COLOR)
-canvas.pack(fill="both", expand=True)
+    signal.signal(signal.SIGINT, handle_exit)
 
-dtw_card   = DateTimeWeatherCard(canvas, x=10,   y=10)
-news_card  = NewsCard(canvas,            x=1020, y=10)
-stock_card = StocksCard(canvas,          x=10,   y=790)
+    canvas = tk.Frame(root, bg=BG_COLOR)
+    canvas.pack(fill="both", expand=True)
 
-bg(fetch_weather)
-dtw_card.refresh_weather()
+    dtw_card = DateTimeWeatherCard(canvas, x=10, y=10)
+    NewsCard(canvas, x=1020, y=10)
+    StocksCard(canvas, x=10, y=790)
 
-hand_thread = threading.Thread(target=run_hand_tracking, daemon=True)
-hand_thread.start()
+    bg(fetch_weather)
+    dtw_card.refresh_weather()
 
-root.mainloop()
+    hand_thread = threading.Thread(target=run_hand_tracking, daemon=True)
+    hand_thread.start()
+
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
