@@ -340,9 +340,9 @@ root.bind("<Escape>", lambda e: root.destroy())
 canvas = tk.Frame(root, bg=BG_COLOR)
 canvas.pack(fill="both", expand=True)
 
-dtw_card   = DateTimeWeatherCard(canvas, x=40,  y=30)
-news_card  = NewsCard(canvas,            x=40,  y=130)
-stock_card = StocksCard(canvas,          x=40,  y=340)
+dtw_card   = DateTimeWeatherCard(canvas, x=10,  y=10)
+news_card  = NewsCard(canvas,            x=1020,  y=10)
+stock_card = StocksCard(canvas,          x=10,  y=790)
 
 bg(fetch_weather)
 dtw_card.refresh_weather()
