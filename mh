@@ -14,7 +14,7 @@ from pynput.mouse import Button, Controller as MouseController
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
-    # Mouse controller (pynput — much faster than pyautogui on Linux)
+# Mouse controller (pynput — much faster than pyautogui on Linux)
 mouse = MouseController()
 last_mouse_pos = None  # tracks previous position for relative movement
 
@@ -180,15 +180,16 @@ def run(model: str, num_hands: int,
                     if elapsed >= ILY_HOLD_SECONDS:
                         TRACKING_ENABLED = not TRACKING_ENABLED
                         ily_start_time = None
-                        # Safety: release mouse if tracking is turned off mid-drag
                         if TRACKING_ENABLED:
+                            # Snap cursor to palm position the moment tracking turns on
                             palm = hand_landmarks[9]
                             snap_x = int(palm.x * screen_w)
                             snap_y = int(palm.y * screen_h)
                             mouse.position = (snap_x, snap_y)
                             last_mouse_pos = (snap_x, snap_y)
                         else:
-                           if mouse_held:
+                            # Safety: release mouse if tracking turned off mid-drag
+                            if mouse_held:
                                 mouse.release(Button.left)
                                 mouse_held = False
                     else:
@@ -239,13 +240,13 @@ def run(model: str, num_hands: int,
                     cv2.circle(image, (cursor_x, cursor_y), 20, (0, 0, 255), -1)
                     cv2.circle(image, (cursor_x, cursor_y), 20, (0, 0, 180), 2)
                     if not mouse_held:
-                        mouse.press(Button.left)   # grab
+                        mouse.press(Button.left)
                         mouse_held = True
                 else:
                     cv2.circle(image, (cursor_x, cursor_y), 15, (0, 255, 255), -1)
                     cv2.circle(image, (cursor_x, cursor_y), 15, (0, 180, 180), 2)
                     if mouse_held:
-                        mouse.release(Button.left)  # drop
+                        mouse.release(Button.left)
                         mouse_held = False
 
                 was_fist = is_fist
