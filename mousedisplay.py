@@ -12,7 +12,8 @@ from dotenv import load_dotenv
 
 import cv2
 import mediapipe as mp
-import pyautogui
+from pynput.mouse import Button, Controller as MouseController
+mouse = MouseController()
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
@@ -53,8 +54,6 @@ FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
 SMOOTHING_WINDOW = 4
 
-pyautogui.FAILSAFE = False
-pyautogui.PAUSE = 0
 
 running = True
 DETECTION_RESULT = None
@@ -151,17 +150,33 @@ def smooth_position(x, y):
     avg_x = int(sum(px for px, _ in position_buffer) / len(position_buffer))
     avg_y = int(sum(py for _, py in position_buffer) / len(position_buffer))
     return avg_x, avg_y
+    
+def get_screen_size():
+    """Get screen size on Linux without pyautogui."""
+    try:
+        import subprocess
+        out = subprocess.check_output(
+            "xrandr | grep '*' | awk '{print $1}'", shell=True
+        ).decode().strip().split('\n')[0]
+        w, h = out.split('x')
+        return int(w), int(h)
+    except Exception:
+        return 1920, 1080  # safe fallback
 
 
 def run_hand_tracking():
     global running, DETECTION_RESULT
+    
+    screen_w, screen_h = get_screen_size()
+    print(f"Screen size: {screen_w}x{screen_h}")
+    
 
-    try:
-        screen_w, screen_h = pyautogui.size()
-        print(f"Screen size: {screen_w}x{screen_h}")
-    except Exception as e:
-        print(f"Unable to get screen size: {e}")
-        return
+#    try:
+#        screen_w, screen_h = pyautogui.size()
+#        print(f"Screen size: {screen_w}x{screen_h}")
+#    except Exception as e:
+#        print(f"Unable to get screen size: {e}")
+#        return
 
     cap = cv2.VideoCapture(CAMERA_ID)
     if not cap.isOpened():
@@ -211,7 +226,7 @@ def run_hand_tracking():
             if DETECTION_RESULT is None or not DETECTION_RESULT.hand_landmarks:
                 if was_fist:
                     try:
-                        pyautogui.mouseUp()
+                        mouse.release(Button.left)
                     except Exception:
                         pass
                     was_fist = False
@@ -239,7 +254,7 @@ def run_hand_tracking():
                     print(f"Tracking {'ENABLED' if TRACKING_ENABLED else 'DISABLED'}")
                     if not TRACKING_ENABLED and was_fist:
                         try:
-                            pyautogui.mouseUp()
+                            mouse.release(Button.left)
                         except Exception:
                             pass
                         was_fist = False
@@ -256,7 +271,7 @@ def run_hand_tracking():
             smooth_x, smooth_y = smooth_position(raw_x, raw_y)
 
             try:
-                pyautogui.moveTo(smooth_x, smooth_y, duration=0, _pause=False)
+                mouse.position = (smooth_x, smooth_y)
             except Exception as e:
                 print(f"Mouse move error: {e}")
 
@@ -269,9 +284,9 @@ def run_hand_tracking():
 
             try:
                 if is_fist and not was_fist:
-                    pyautogui.mouseDown()
+                    mouse.press(Button.left)
                 elif not is_fist and was_fist:
-                    pyautogui.mouseUp()
+                    mouse.release(Button.left)
             except Exception as e:
                 print(f"Mouse click error: {e}")
 
@@ -281,7 +296,7 @@ def run_hand_tracking():
         print(f"Hand tracking crashed: {e}")
     finally:
         try:
-            pyautogui.mouseUp()
+            mouse.release(Button.left)
         except Exception:
             pass
         try:
