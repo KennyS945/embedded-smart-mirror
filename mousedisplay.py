@@ -172,6 +172,9 @@ def run_hand_tracking():
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
 
     was_fist = False
+    TRACKING_ENABLED = False
+    ily_start_time = None
+    ILY_HOLD_SECONDS = 3
 
     def save_result(result: vision.HandLandmarkerResult, unused_output_image: mp.Image, timestamp_ms: int):
         global DETECTION_RESULT
@@ -212,9 +215,40 @@ def run_hand_tracking():
                     except Exception:
                         pass
                     was_fist = False
+                ily_start_time = None
                 continue
 
             hand_landmarks = DETECTION_RESULT.hand_landmarks[0]
+
+            # --- ILY detection ---
+            # If ILY not triggering reliably, flip < to > on the thumb_out line
+            thumb_out = hand_landmarks[4].x < hand_landmarks[3].x
+            index_out = hand_landmarks[8].y  < hand_landmarks[6].y
+            middle_in = hand_landmarks[12].y > hand_landmarks[10].y
+            ring_in   = hand_landmarks[16].y > hand_landmarks[14].y
+            pinky_out = hand_landmarks[20].y < hand_landmarks[18].y
+            is_ily = thumb_out and index_out and middle_in and ring_in and pinky_out
+
+            if is_ily:
+                if ily_start_time is None:
+                    ily_start_time = time.time()
+                elapsed = time.time() - ily_start_time
+                if elapsed >= ILY_HOLD_SECONDS:
+                    TRACKING_ENABLED = not TRACKING_ENABLED
+                    ily_start_time = None
+                    print(f"Tracking {'ENABLED' if TRACKING_ENABLED else 'DISABLED'}")
+                    if not TRACKING_ENABLED and was_fist:
+                        try:
+                            pyautogui.mouseUp()
+                        except Exception:
+                            pass
+                        was_fist = False
+            else:
+                ily_start_time = None
+
+            # --- Only move/click if tracking is on ---
+            if not TRACKING_ENABLED:
+                continue
 
             palm = hand_landmarks[9]
             raw_x = int(palm.x * screen_w)
@@ -227,7 +261,7 @@ def run_hand_tracking():
                 print(f"Mouse move error: {e}")
 
             fingertips = [8, 12, 16, 20]
-            knuckles = [6, 10, 14, 18]
+            knuckles   = [6, 10, 14, 18]
             is_fist = all(
                 hand_landmarks[tip].y > hand_landmarks[knuck].y
                 for tip, knuck in zip(fingertips, knuckles)
@@ -255,7 +289,6 @@ def run_hand_tracking():
         except Exception:
             pass
         cap.release()
-
 
 # =========================
 # ROUNDED RECTANGLE HELPER
