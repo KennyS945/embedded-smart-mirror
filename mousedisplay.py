@@ -190,6 +190,7 @@ def run_hand_tracking():
     TRACKING_ENABLED = False
     ily_start_time = None
     ILY_HOLD_SECONDS = 3
+    ily_cooldown_until = 0
 
     def save_result(result: vision.HandLandmarkerResult, unused_output_image: mp.Image, timestamp_ms: int):
         global DETECTION_RESULT
@@ -244,13 +245,14 @@ def run_hand_tracking():
             pinky_out = hand_landmarks[20].y < hand_landmarks[18].y
             is_ily = thumb_out and index_out and middle_in and ring_in and pinky_out
 
-            if is_ily:
+            if is_ily and now >= ily_cooldown_until:  # <-- respect cooldown
                 if ily_start_time is None:
-                    ily_start_time = time.time()
-                elapsed = time.time() - ily_start_time
+                    ily_start_time = now
+                elapsed = now - ily_start_time
                 if elapsed >= ILY_HOLD_SECONDS:
                     TRACKING_ENABLED = not TRACKING_ENABLED
                     ily_start_time = None
+                    ily_cooldown_until = now + 2.0  # <-- 2 second cooldown after toggle
                     print(f"Tracking {'ENABLED' if TRACKING_ENABLED else 'DISABLED'}")
                     if not TRACKING_ENABLED and was_fist:
                         try:
@@ -260,7 +262,7 @@ def run_hand_tracking():
                         was_fist = False
             else:
                 ily_start_time = None
-
+                
             # --- Only move/click if tracking is on ---
             if not TRACKING_ENABLED:
                 continue
