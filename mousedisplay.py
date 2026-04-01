@@ -60,6 +60,7 @@ DETECTION_RESULT = None
 position_buffer = []
 root = None
 _ily_label = None
+TRACKING_ENABLED = False
 
 # =========================
 # API CACHE
@@ -180,7 +181,7 @@ def show_ily_countdown(seconds_remaining):
 			_ily_label.place(x=10, y=60)
 			
 		#update text with current time remaining
-		_ily_label.config(text=f"Cursor enabled in {seconds_remaining:.1f}s")
+		_ily_label.config(text=f"Turning cursor {'on' if not TRACKING_ENABLED else 'off'} in {seconds_remaining:.1f}s")
 		
 	#we can't run Tkinter directly from the background camera thread, it will crash
 	# this code will safely schedule update to run on the main thread instead, 0 will mean asap
@@ -235,7 +236,7 @@ def run_hand_tracking():
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
 
     was_fist = False
-    TRACKING_ENABLED = False
+    global TRACKING_ENABLED
     ily_start_time = None
     ILY_HOLD_SECONDS = 3
 
