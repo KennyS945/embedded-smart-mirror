@@ -59,6 +59,7 @@ running = True
 DETECTION_RESULT = None
 position_buffer = []
 root = None
+_ily_label = None
 
 # =========================
 # API CACHE
@@ -140,6 +141,53 @@ def bg(fn):
 
 
 # =========================
+# HAND TIME TEMP WIDGET
+# =========================
+
+
+
+def show_ily_countdown(seconds_remaining):
+	global _ily_label, root
+	#we need to access the global label reference and the root. 
+	
+	#if the window doesn't exist yet, do nothing 
+	if root is None: 
+		return_event
+		
+	def _update():
+		global _ily_label
+		
+		#if seconds 0 or less, hide label 
+		if seconds_remaining <= 0: 
+			if _ily_label is not None: 
+				#remove label from screen completely 
+				_ily_label.destroy()
+				#reset to none so it can be recreated fresh next time
+				_ily_label = None
+			return 
+		#if label doesn't exist yet, create it for the first time
+		if _ily_label is None: 
+			_ily_label = tk.Label(
+				root,
+				text="", 
+				fg="white",
+				bg="#1c1c1e", 
+				font=("Arial", 16, "bold"),
+				padx=12,
+				pady=8
+			)
+			#placed in the top left corner, should be just below data/time 
+			_ily_label.place(x=10, y=60)
+			
+		#update text with current time remaining
+		_ily_label.config(text=f"Cursor enabled in {seconds_remaining:.1f}s")
+		
+	#we can't run Tkinter directly from the background camera thread, it will crash
+	# this code will safely schedule update to run on the main thread instead, 0 will mean asap
+	root.after(0, _update)
+		
+
+# =========================
 # HAND HELPERS
 # =========================
 def smooth_position(x, y):
@@ -190,7 +238,6 @@ def run_hand_tracking():
     TRACKING_ENABLED = False
     ily_start_time = None
     ILY_HOLD_SECONDS = 3
-    ily_cooldown_until = 0
 
     def save_result(result: vision.HandLandmarkerResult, unused_output_image: mp.Image, timestamp_ms: int):
         global DETECTION_RESULT
@@ -245,14 +292,22 @@ def run_hand_tracking():
             pinky_out = hand_landmarks[20].y < hand_landmarks[18].y
             is_ily = thumb_out and index_out and middle_in and ring_in and pinky_out
 
-            if is_ily and now >= ily_cooldown_until:  # <-- respect cooldown
+            if is_ily:
+				
+				#records the moment ILY was first detected so hold time can be measured 
                 if ily_start_time is None:
-                    ily_start_time = now
-                elapsed = now - ily_start_time
+                    ily_start_time = time.time()
+                    
+                elapsed = time.time() - ily_start_time
+                remaining = ILY_HOLD_SECONDS - elapsed
+                
                 if elapsed >= ILY_HOLD_SECONDS:
                     TRACKING_ENABLED = not TRACKING_ENABLED
                     ily_start_time = None
-                    ily_cooldown_until = now + 2.0  # <-- 2 second cooldown after toggle
+                    
+                    #Pass 0 to detroy countdown label now thar we're done
+                    show_ily_countdown(0)
+                    
                     print(f"Tracking {'ENABLED' if TRACKING_ENABLED else 'DISABLED'}")
                     if not TRACKING_ENABLED and was_fist:
                         try:
@@ -260,9 +315,16 @@ def run_hand_tracking():
                         except Exception:
                             pass
                         was_fist = False
+                    
+                else:
+                    show_ily_countdown(remaining)
             else:
                 ily_start_time = None
-                
+                show_ily_countdown(0)           
+
+				
+
+
             # --- Only move/click if tracking is on ---
             if not TRACKING_ENABLED:
                 continue
