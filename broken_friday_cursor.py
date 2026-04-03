@@ -192,15 +192,20 @@ def show_ily_countdown(seconds_remaining):
 
 
 def update_fake_cursor(x, y): 
+	global cursor_dot
 	if cursor_canvas is not None and cursor_dot is not None:
-		cursor_canvas.coords(cursor_dot, x - 10, y - 10, x + 10, y + 10)
+		#cursor_canvas.coords(cursor_dot, x - 10, y - 10, x + 10, y + 10)
+		cursor_dot.place(x=x - 10, y=y - 10)
 
 def set_fake_cursor_visible(visible): 
+	global cursor_dot
 	if cursor_canvas is not None:
 		if visible: 
-			cursor_canvas.itemconfigure(cursor_dot, state="normal")
+			#cursor_canvas.itemconfigure(cursor_dot, state="normal")
+			cursor_dot.place(x=0, y=0)
 		else:
-			cursor_canvas.itemconfigure(cursor_dot, state="hidden")
+			#cursor_canvas.itemconfigure(cursor_dot, state="hidden")
+			cursor_dot.place_forget()
 			
 	
 
@@ -328,7 +333,8 @@ def run_hand_tracking():
                     #Pass 0 to detroy countdown label now thar we're done
                     show_ily_countdown(0)
                     
-                    root.after(0, lambda: set_fake_cursor_visible(TRACKING_ENABLED))
+                    enabled = TRACKING_ENABLED
+                    root.after(0, lambda v=enabled: set_fake_cursor_visible(v))
                     
                     print(f"Tracking {'ENABLED' if TRACKING_ENABLED else 'DISABLED'}")
                     if not TRACKING_ENABLED and was_fist:
@@ -694,23 +700,13 @@ def main():
     root.bind("<Escape>", close_app)
     root.bind("q", close_app)
     root.protocol("WM_DELETE_WINDOW", close_app)
+    
 
     signal.signal(signal.SIGINT, handle_exit)
     
-     # Cursor
-    # make a canvas the same size as the whole window
-    cursor_canvas = tk.Canvas(root, bg="black", highlightthickness=0)
-    cursor_canvas.place(x=0, y=0, relwidth=1, relheight=1)
-    #cursor_canvas.itemconfigure(cursor_dot, state="hidden")
+        
     
-    #tiny white circle on cavas, this is the fake cursor 
-    cursor_dot = cursor_canvas.create_oval(0, 0, 20, 20, fill="red", outline="")
-    cursor_canvas.itemconfigure(cursor_dot, state="hidden")
-    
-    
-    #this should... hide it behind everything before we start ILY so we can't see it
-    #cursor_canvas.lower(canvas)
-
+   
     canvas = tk.Frame(root, bg=BG_COLOR)
     canvas.pack(fill="both", expand=True)
 
@@ -718,6 +714,20 @@ def main():
     NewsCard(canvas, x=1020, y=10)
     StocksCard(canvas, x=10, y=790)
     
+    
+          # Cursor
+    cursor_dot = tk.Label(root, bg="white", width=2, height=1)
+    # make a canvas the same size as the whole window
+    #cursor_canvas = tk.Canvas(root, highlightthickness=0)
+    #cursor_canvas.place(x=0, y=0, relwidth=1, relheight=1)
+    #cursor_canvas.itemconfigure(cursor_dot, state="hidden")
+    
+    #tiny white circle on cavas, this is the fake cursor 
+    #cursor_dot = cursor_canvas.create_oval(0, 0, 20, 20, fill="white", outline="")
+    #cursor_canvas.itemconfigure(cursor_dot, state="hidden")
+    #this should... hide it behind everything before we start ILY so we can't see it
+    #cursor_canvas.lower(canvas)
+
     
     bg(fetch_weather)
     dtw_card.refresh_weather()
