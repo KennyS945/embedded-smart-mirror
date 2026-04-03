@@ -61,7 +61,6 @@ position_buffer = []
 root = None
 _ily_label = None
 TRACKING_ENABLED = False
-_cursor_visible = False
 
 # =========================
 # API CACHE
@@ -140,23 +139,6 @@ def fetch_stocks():
 
 def bg(fn):
     threading.Thread(target=fn, daemon=True).start()
- 
- # =========================
-# CURSOR
-# =========================   
-def move_fake_cursor(x, y):
-	"""Move the fake cursor dot to x, y on screen."""
-	if cursor_canvas is not None:
-		cursor_canvas.coords(cursor_dot, x - 10, y - 10, x + 10, y + 10)
-		
-def set_fake_cursor_visible(visible):
-	global _cursor_visible
-	_cursor_visible = visible
-	if visible:
-		cursor_canvas.lift() #bring everything to front
-	else:
-		cursor_canvas.lower() # hide behind everything
-	
 
 
 # =========================
@@ -294,7 +276,7 @@ def run_hand_tracking():
                 if was_fist:
                     try:
                         #mouse.release(Button.left)
-                        root.after(0, lambda: root.event_generate("<ButtonRelease-1>", x=smooth_x, y=smooth_y))
+                        root.event_generate("<ButtonRelease-1>", x=smooth_x, y=smooth_y)
                     except Exception:
                         pass
                     was_fist = False
@@ -323,7 +305,6 @@ def run_hand_tracking():
                 
                 if elapsed >= ILY_HOLD_SECONDS:
                     TRACKING_ENABLED = not TRACKING_ENABLED
-                    root.after(0, lambda: set_fake_cursor_visible(TRACKING_ENABLED))
                     ily_start_time = None
                     
                     #Pass 0 to detroy countdown label now thar we're done
@@ -333,7 +314,7 @@ def run_hand_tracking():
                     if not TRACKING_ENABLED and was_fist:
                         try:
                             #mouse.release(Button.left)
-                            root.after(0, lambda: root.event_generate("<ButtonRelease-1>", x=smooth_x, y=smooth_y))
+                            root.event_generate("<ButtonRelease-1>", x=smooth_x, y=smooth_y)
                         except Exception:
                             pass
                         was_fist = False
@@ -342,7 +323,14 @@ def run_hand_tracking():
                     show_ily_countdown(remaining)
             else:
                 ily_start_time = None
-                show_ily_countdown(0)           
+                show_ily_countdown(0)     
+           
+           # ===== PROB WRONG 
+            if TRACKING_ENABLED:
+                cursor_canvas.lift()
+            else: 
+                cursor_canvas.lower()
+		      
 
 				
 
@@ -358,7 +346,7 @@ def run_hand_tracking():
 
             try:
                 #mouse.position = (smooth_x, smooth_y)
-                root.after(0, lambda: move_fake_cursor(smooth_x, smooth_y))
+                cursor_canvas.coords(cursor_dot, smooth_x - 10, smooth_y - 10, smooth_x + 10, smooth_y + 10)
             except Exception as e:
                 print(f"Mouse move error: {e}")
 
@@ -372,10 +360,10 @@ def run_hand_tracking():
             try:
                 if is_fist and not was_fist:
                     #mouse.press(Button.left)
-                    root.after(0, lambda: root.event_generate("<ButtonPress-1>", x=smooth_x, y=smooth_y))
+                    root.event_generate("<ButtonPress-1>", x=smooth_x, y=smooth_y)
                 elif not is_fist and was_fist:
                     #mouse.release(Button.left)
-                    root.after(0, lambda: root.event_generate("<ButtonRelease-1>", x=smooth_x, y=smooth_y))
+                    root.event_generate("<ButtonRelease-1>", x=smooth_x, y=smooth_y)
             except Exception as e:
                 print(f"Mouse click error: {e}")
 
@@ -386,7 +374,7 @@ def run_hand_tracking():
     finally:
         try:
             #mouse.release(Button.left)
-            root.after(0, lambda: root.event_generate("<ButtonRelease-1>", x=smooth_x, y=smooth_y))
+            root.event_generate("<ButtonRelease-1>", x=smooth_x, y=smooth_y)
         except Exception:
             pass
         try:
@@ -689,17 +677,22 @@ def main():
     root.protocol("WM_DELETE_WINDOW", close_app)
 
     signal.signal(signal.SIGINT, handle_exit)
+    
+    
+    # Cursor
+    # make a canvas the same size as the whole window
+    cursor_canvas = tk.Canvas(root, bg="black", highlightthickness=0)
+    cursor_canvas.place(x=0, y=0, relwidth=1, relheight=1)
+    
+    #tiny white circle on cavas, this is the fake cursor 
+    cursor_dot = cursor_canvas.create_oval(0, 0, 20, 20, fill="white", outline="")
+    
+    #this should... hide it behind everything before we start ILY so we can't see it
+    cursor_canvas.lower()
+    
 
     canvas = tk.Frame(root, bg=BG_COLOR)
     canvas.pack(fill="both", expand=True)
-    
-    #fake cursor 
-    cursor_canvas = tk.Canvas(root, bg="black", highlightthickness=0, cursor="none")
-    cursor_canvas.place(x=0, y=0, relheight=1)
-    cursor_canvas.lower()
-    
-    #cursor shape
-    cursor_dot = cursor_canvas.create_oval(0, 0, 20, 20, fill="white", outline="")
 
     dtw_card = DateTimeWeatherCard(canvas, x=10, y=10)
     NewsCard(canvas, x=1020, y=10)
