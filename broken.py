@@ -61,6 +61,8 @@ position_buffer = []
 root = None
 _ily_label = None
 TRACKING_ENABLED = False
+cursor_canvas = None
+cursor_dot = None 
 
 # =========================
 # API CACHE
@@ -153,7 +155,8 @@ def show_ily_countdown(seconds_remaining):
 	
 	#if the window doesn't exist yet, do nothing 
 	if root is None: 
-		return_event
+		#return_event
+		return 
 		
 	def _update():
 		global _ily_label
@@ -186,7 +189,20 @@ def show_ily_countdown(seconds_remaining):
 	#we can't run Tkinter directly from the background camera thread, it will crash
 	# this code will safely schedule update to run on the main thread instead, 0 will mean asap
 	root.after(0, _update)
-		
+
+
+def update_fake_cursor(x, y): 
+	if cursor_canvas is not None and cursor_dot is not None:
+		cursor_canvas.coords(cursor_dot, x - 10, y - 10, x + 10, y + 10)
+
+def set_fake_cursor_visible(visible): 
+	if cursor_canvas is not None:
+		if visible: 
+			cursor_canvas.itemconfigure(cursor_dot, state="normal")
+		else:
+			cursor_canvas.itemconfigure(cursor_dot, state="hidden")
+			
+	
 
 # =========================
 # HAND HELPERS
@@ -216,6 +232,7 @@ def get_screen_size():
 def run_hand_tracking():
     global running, DETECTION_RESULT
     
+    
     screen_w, screen_h = get_screen_size()
     print(f"Screen size: {screen_w}x{screen_h}")
     
@@ -239,6 +256,7 @@ def run_hand_tracking():
     global TRACKING_ENABLED
     ily_start_time = None
     ILY_HOLD_SECONDS = 3
+    smooth_x, smooth_y = 0, 0
 
     def save_result(result: vision.HandLandmarkerResult, unused_output_image: mp.Image, timestamp_ms: int):
         global DETECTION_RESULT
@@ -310,6 +328,8 @@ def run_hand_tracking():
                     #Pass 0 to detroy countdown label now thar we're done
                     show_ily_countdown(0)
                     
+                    root.after(0, lambda: set_fake_cursor_visible(TRACKING_ENABLED))
+                    
                     print(f"Tracking {'ENABLED' if TRACKING_ENABLED else 'DISABLED'}")
                     if not TRACKING_ENABLED and was_fist:
                         try:
@@ -325,11 +345,7 @@ def run_hand_tracking():
                 ily_start_time = None
                 show_ily_countdown(0)     
            
-           # ===== PROB WRONG 
-            if TRACKING_ENABLED:
-                cursor_canvas.lift()
-            else: 
-                cursor_canvas.lower()
+
 		      
 
 				
@@ -343,12 +359,15 @@ def run_hand_tracking():
             raw_x = int(palm.x * screen_w)
             raw_y = int(palm.y * screen_h)
             smooth_x, smooth_y = smooth_position(raw_x, raw_y)
+            
+            sx, sy = smooth_x, smooth_y
+            root.after(0, lambda x=sx, y=sy: update_fake_cursor(x, y))
 
-            try:
+            #try:
                 #mouse.position = (smooth_x, smooth_y)
-                cursor_canvas.coords(cursor_dot, smooth_x - 10, smooth_y - 10, smooth_x + 10, smooth_y + 10)
-            except Exception as e:
-                print(f"Mouse move error: {e}")
+                #cursor_canvas.coords(cursor_dot, smooth_x - 10, smooth_y - 10, smooth_x + 10, smooth_y + 10)
+            #except Exception as e:
+                #print(f"Mouse move error: {e}")
 
             fingertips = [8, 12, 16, 20]
             knuckles   = [6, 10, 14, 18]
@@ -659,7 +678,7 @@ def handle_exit(sig, frame):
 # MAIN WINDOW
 # =========================
 def main():
-    global root
+    global root, cursor_canvas, cursor_dot
 
     root = tk.Tk()
     root.title("Smart Mirror Dashboard")
@@ -678,18 +697,19 @@ def main():
 
     signal.signal(signal.SIGINT, handle_exit)
     
-    
-    # Cursor
+     # Cursor
     # make a canvas the same size as the whole window
     cursor_canvas = tk.Canvas(root, bg="black", highlightthickness=0)
     cursor_canvas.place(x=0, y=0, relwidth=1, relheight=1)
+    #cursor_canvas.itemconfigure(cursor_dot, state="hidden")
     
     #tiny white circle on cavas, this is the fake cursor 
-    cursor_dot = cursor_canvas.create_oval(0, 0, 20, 20, fill="white", outline="")
+    cursor_dot = cursor_canvas.create_oval(0, 0, 20, 20, fill="red", outline="")
+    cursor_canvas.itemconfigure(cursor_dot, state="hidden")
+    
     
     #this should... hide it behind everything before we start ILY so we can't see it
-    cursor_canvas.lower()
-    
+    #cursor_canvas.lower(canvas)
 
     canvas = tk.Frame(root, bg=BG_COLOR)
     canvas.pack(fill="both", expand=True)
@@ -697,9 +717,12 @@ def main():
     dtw_card = DateTimeWeatherCard(canvas, x=10, y=10)
     NewsCard(canvas, x=1020, y=10)
     StocksCard(canvas, x=10, y=790)
-
+    
+    
     bg(fetch_weather)
     dtw_card.refresh_weather()
+    
+
 
     hand_thread = threading.Thread(target=run_hand_tracking, daemon=True)
     hand_thread.start()
