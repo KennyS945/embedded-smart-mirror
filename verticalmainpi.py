@@ -69,9 +69,9 @@ CAMERA_ID             = 0
 FRAME_WIDTH           = 320     # lower res → less CPU
 FRAME_HEIGHT          = 240
 SMOOTHING_WINDOW      = 4
-HAND_SKIP_FRAMES      = 2       # process every Nth frame to save CPU
+HAND_SKIP_FRAMES      = 1       # process every Nth frame (1 = every frame)
 ILY_HOLD_SECONDS      = 3.0
-HAND_MAX_FPS          = 15.0    # cap processing rate to reduce CPU
+HAND_MAX_FPS          = 24.0    # cap processing rate to reduce CPU
 
 # ─────────────────────────────────────────────
 # GLOBAL STATE
@@ -91,8 +91,6 @@ _root_ref       = None
 _stock_card_ref = None
 _todo_card_ref  = None
 _ily_label      = None
-_cursor_label   = None
-_cursor_target  = {"enabled": False, "x": 0, "y": 0}
 _ily_remaining  = 0.0
 
 _widget_refs = {}
@@ -564,40 +562,11 @@ def _set_ily_remaining(remaining):
     except (TypeError, ValueError):
         _ily_remaining = 0.0
 
-def _set_cursor_target(mx, my, enabled):
-    """Thread-safe-ish: hand thread writes, UI loop reads."""
-    _cursor_target["enabled"] = bool(enabled)
-    try:
-        _cursor_target["x"] = int(mx)
-        _cursor_target["y"] = int(my)
-    except Exception:
-        _cursor_target["x"] = 0
-        _cursor_target["y"] = 0
-
 def ui_overlay_loop():
-    """Main-thread loop: renders cursor + countdown without flooding Tk."""
-    global _ily_label, _cursor_label
+    """Main-thread loop: renders countdown without flooding Tk."""
+    global _ily_label
     if _root_ref is None:
         return
-
-    # Cursor dot
-    if _cursor_target.get("enabled"):
-        if _cursor_label is None:
-            _cursor_label = tk.Label(
-                _root_ref,
-                text="●",
-                fg="#34c759",
-                bg=BG_COLOR,
-                font=("Arial", 22, "bold"),
-                bd=0,
-            )
-        _cursor_label.place(
-            x=int(_cursor_target.get("x", 0)) - 10,
-            y=int(_cursor_target.get("y", 0)) - 18,
-        )
-    else:
-        if _cursor_label is not None:
-            _cursor_label.place_forget()
 
     # ILY countdown label
     if _ily_label is None:
@@ -620,11 +589,11 @@ def ui_overlay_loop():
     else:
         _ily_label.config(text="")
 
-    # ~30 FPS UI overlay updates (lightweight)
-    _root_ref.after(33, ui_overlay_loop)
+    # ~10 FPS UI overlay updates (lightweight)
+    _root_ref.after(100, ui_overlay_loop)
 
 def hand_tracking_loop():
-    global _tracking_enabled, _detection_result, _running
+    global _tracking_enabled, _running
 
     if not os.path.exists(HAND_MODEL_PATH):
         print(f"[Hand] Model not found: {HAND_MODEL_PATH}"); return
@@ -638,20 +607,15 @@ def hand_tracking_loop():
     # Pi: request MJPEG for lower USB bandwidth
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
 
-    def _save_result(result, _img, _ts):
-        global _detection_result
-        _detection_result = result
-
     try:
         detector = vision.HandLandmarker.create_from_options(
             vision.HandLandmarkerOptions(
                 base_options=python.BaseOptions(model_asset_path=HAND_MODEL_PATH),
-                running_mode=vision.RunningMode.LIVE_STREAM,
+                running_mode=vision.RunningMode.IMAGE,
                 num_hands=1,
                 min_hand_detection_confidence=0.45,   # slightly relaxed for Pi
                 min_hand_presence_confidence=0.45,
                 min_tracking_confidence=0.45,
-                result_callback=_save_result,
             )
         )
     except Exception as e:
@@ -684,9 +648,9 @@ def hand_tracking_loop():
             frame    = cv2.flip(frame, 1)
             rgb      = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             mp_img   = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-            detector.detect_async(mp_img, time.time_ns() // 1_000_000)
+            result = detector.detect(mp_img)
 
-            if not _detection_result or not _detection_result.hand_landmarks:
+            if not result or not result.hand_landmarks:
                 if was_fist:
                     try: _mouse.release(Button.left)
                     except Exception: pass
@@ -694,7 +658,7 @@ def hand_tracking_loop():
                 ily_start = None
                 continue
 
-            lm = _detection_result.hand_landmarks[0]
+            lm = result.hand_landmarks[0]
 
             # ILY gesture: thumb + index + pinky out; middle + ring folded
             is_ily = (
@@ -726,7 +690,6 @@ def hand_tracking_loop():
                 _set_ily_remaining(0)
 
             if not _tracking_enabled:
-                _set_cursor_target(0, 0, False)
                 continue
 
             palm    = lm[9]
@@ -755,7 +718,6 @@ def hand_tracking_loop():
     finally:
         try: _mouse.release(Button.left)
         except Exception: pass
-        _set_cursor_target(0, 0, False)
         _set_ily_remaining(0)
         try: detector.close()
         except Exception: pass
