@@ -22,9 +22,6 @@ from vosk import Model, KaldiRecognizer
 
 load_dotenv()
 
-# Second monitor connection COMMENT OUT IF NO SECOND MONITOR
-from screeninfo import get_monitors
-monitors = get_monitors()
 
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 NEWS_API_KEY        = os.getenv("NEWS_API_KEY")
@@ -74,6 +71,7 @@ FRAME_HEIGHT          = 240
 SMOOTHING_WINDOW      = 4
 HAND_SKIP_FRAMES      = 2       # process every Nth frame to save CPU
 ILY_HOLD_SECONDS      = 3.0
+HAND_MAX_FPS          = 15.0    # cap processing rate to reduce CPU
 
 # ─────────────────────────────────────────────
 # GLOBAL STATE
@@ -93,6 +91,7 @@ _root_ref       = None
 _stock_card_ref = None
 _todo_card_ref  = None
 _ily_label      = None
+_cursor_label   = None
 
 _widget_refs = {}
 _widget_visibility = {
@@ -563,22 +562,59 @@ def _show_ily_countdown(remaining):
         global _ily_label
         if _root_ref is None:
             return
-        if remaining <= 0:
-            if _ily_label is not None:
-                _ily_label.destroy()
-                _ily_label = None
-            return
+        # Keep the label instance (avoid flicker); hide via empty text.
         if _ily_label is None:
             _ily_label = tk.Label(
                 _root_ref, text="", fg="white", bg="#1c1c1e",
                 font=("Arial", 14, "bold"), padx=12, pady=8,
             )
-            _ily_label.place(x=10, y=95)
+            # Default location: just below the datetime card to avoid overlap.
+            y = 10
+            dtw = _widget_refs.get("datetime")
+            if dtw is not None:
+                try:
+                    y = dtw.winfo_y() + dtw.card_h + 10
+                except Exception:
+                    y = 95
+            _ily_label.place(x=10, y=y)
+
+        if remaining <= 0:
+            _ily_label.config(text="")
+            return
+
         action = "off" if _tracking_enabled else "on"
         _ily_label.config(text=f"Cursor {action} in {remaining:.1f}s")
 
     if _root_ref:
         _root_ref.after(0, _update)
+
+def _schedule_cursor(mx, my, enabled):
+    """Show/hide and move the on-screen cursor indicator (main thread)."""
+    global _cursor_label
+    if _root_ref is None:
+        return
+
+    def _update():
+        global _cursor_label
+        if _root_ref is None:
+            return
+        if not enabled:
+            if _cursor_label is not None:
+                _cursor_label.place_forget()
+            return
+        if _cursor_label is None:
+            _cursor_label = tk.Label(
+                _root_ref,
+                text="●",
+                fg="#34c759",
+                bg=BG_COLOR,
+                font=("Arial", 22, "bold"),
+                bd=0,
+            )
+        # Center the dot on the coordinates
+        _cursor_label.place(x=int(mx) - 10, y=int(my) - 18)
+
+    _root_ref.after(0, _update)
 
 def hand_tracking_loop():
     global _tracking_enabled, _detection_result, _running
@@ -617,16 +653,25 @@ def hand_tracking_loop():
     was_fist    = False
     ily_start   = None
     frame_count = 0
+    last_tick   = 0.0
 
     try:
         while _running and cap.isOpened():
-            ok, frame = cap.read()
-            if not ok:
+            # Cap processing FPS (prevents pegging CPU on Pi)
+            now = time.time()
+            min_dt = 1.0 / max(HAND_MAX_FPS, 1.0)
+            if last_tick and (now - last_tick) < min_dt:
+                time.sleep(max(0.0, min_dt - (now - last_tick)))
+            last_tick = time.time()
+
+            # Cheap skip: grab (no decode) on skipped frames
+            frame_count += 1
+            if HAND_SKIP_FRAMES > 1 and (frame_count % HAND_SKIP_FRAMES) != 0:
+                cap.grab()
                 continue
 
-            frame_count += 1
-            # Skip frames to reduce CPU load on Pi
-            if frame_count % HAND_SKIP_FRAMES != 0:
+            ok, frame = cap.read()
+            if not ok:
                 continue
 
             frame    = cv2.flip(frame, 1)
@@ -674,6 +719,7 @@ def hand_tracking_loop():
                 _show_ily_countdown(0)
 
             if not _tracking_enabled:
+                _schedule_cursor(0, 0, False)
                 continue
 
             palm    = lm[9]
@@ -683,6 +729,7 @@ def hand_tracking_loop():
                 _mouse.position = (mx, my)
             except Exception:
                 pass
+            _schedule_cursor(mx, my, True)
 
             tips    = [8, 12, 16, 20]
             knucks  = [6, 10, 14, 18]
@@ -701,6 +748,7 @@ def hand_tracking_loop():
     finally:
         try: _mouse.release(Button.left)
         except Exception: pass
+        _schedule_cursor(0, 0, False)
         try: detector.close()
         except Exception: pass
         cap.release()
@@ -985,8 +1033,6 @@ def main():
 
     sw = root.winfo_screenwidth()
     sh = root.winfo_screenheight()
-    #COMMENT OUT IF NO SECOND MONITOR
-    root.geometry(f"{monitors[1].width}x{monitors[1].height}+{monitors[1].x}+{monitors[1].y}")
     root.attributes("-fullscreen", True)
     root.bind("<Escape>", close_app)
     root.bind("q",        close_app)
