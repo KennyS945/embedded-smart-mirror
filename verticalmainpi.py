@@ -567,30 +567,41 @@ def ui_overlay_loop():
     global _ily_label
     if _root_ref is None:
         return
+        
+    if _ily_remaining <= 0: 
+        if _ily_label is not None: 
+            #remove label from screen completely 
+            _ily_label.destroy()
+            #reset to none so it can be recreated fresh next time
+            _ily_label = None
+    else:
 
     # ILY countdown label
-    if _ily_label is None:
-        _ily_label = tk.Label(
-            _root_ref, text="", fg="white", bg="#1c1c1e",
-            font=("Arial", 14, "bold"), padx=12, pady=8,
-        )
-        y = 10
-        dtw = _widget_refs.get("datetime")
-        if dtw is not None:
-            try:
-                y = dtw.winfo_y() + dtw.card_h + 10
-            except Exception:
-                y = 95
-        _ily_label.place(x=10, y=y)
+        if _ily_label is None:
+            _ily_label = tk.Label(
+                _root_ref, text="", fg="white", bg="#1c1c1e",
+                font=("Arial", 14, "bold"), padx=12, pady=8,
+            )
+            y = 10
+            dtw = _widget_refs.get("datetime")
+            if dtw is not None:
+                try:
+                    y = dtw.winfo_y() + dtw.card_h + 10
+                except Exception:
+                    y = 95
+            _ily_label.place(x=10, y=y)
+        
+        
 
-    if _ily_remaining > 0:
+    #if _ily_remaining > 0:
         action = "off" if _tracking_enabled else "on"
         _ily_label.config(text=f"Cursor {action} in {_ily_remaining:.1f}s")
-    else:
-        _ily_label.config(text="")
+    #else:
+        #_ily_label.config(text="")
+         
 
     # ~10 FPS UI overlay updates (lightweight)
-    _root_ref.after(100, ui_overlay_loop)
+    _root_ref.after(33, ui_overlay_loop)
 
 def hand_tracking_loop():
     global _tracking_enabled, _running
@@ -680,8 +691,10 @@ def hand_tracking_loop():
                     _set_ily_remaining(0)
                     print(f"[Hand] Tracking {'ON' if _tracking_enabled else 'OFF'}")
                     if not _tracking_enabled and was_fist:
-                        try: _mouse.release(Button.left)
-                        except Exception: pass
+                        try: 
+                            _mouse.release(Button.left)
+                        except Exception: 
+                            pass
                         was_fist = False
                 else:
                     _set_ily_remaining(remaining)
