@@ -68,10 +68,10 @@ HAND_MODEL_PATH       = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 CAMERA_ID             = 0
 FRAME_WIDTH           = 320     # lower res → less CPU
 FRAME_HEIGHT          = 240
-SMOOTHING_WINDOW      = 4
+SMOOTHING_WINDOW      = 5
 HAND_SKIP_FRAMES      = 1       # process every Nth frame (1 = every frame)
 ILY_HOLD_SECONDS      = 3.0
-HAND_MAX_FPS          = 24.0    # cap processing rate to reduce CPU
+HAND_MAX_FPS          = 20.0    # cap processing rate to reduce CPU
 
 # ─────────────────────────────────────────────
 # GLOBAL STATE
@@ -699,7 +699,6 @@ def hand_tracking_loop():
                 _mouse.position = (mx, my)
             except Exception:
                 pass
-            _set_cursor_target(mx, my, True)
 
             tips    = [8, 12, 16, 20]
             knucks  = [6, 10, 14, 18]
