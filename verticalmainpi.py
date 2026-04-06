@@ -92,6 +92,8 @@ _stock_card_ref = None
 _todo_card_ref  = None
 _ily_label      = None
 _cursor_label   = None
+_cursor_target  = {"enabled": False, "x": 0, "y": 0}
+_ily_remaining  = 0.0
 
 _widget_refs = {}
 _widget_visibility = {
@@ -554,54 +556,32 @@ def _smooth(x, y):
     ay = int(sum(py for _, py in _position_buffer) / len(_position_buffer))
     return ax, ay
 
-def _show_ily_countdown(remaining):
-    """Schedule ILY countdown label update on main thread."""
-    global _ily_label
+def _set_ily_remaining(remaining):
+    """Thread-safe-ish: hand thread writes, UI loop reads."""
+    global _ily_remaining
+    try:
+        _ily_remaining = float(remaining)
+    except (TypeError, ValueError):
+        _ily_remaining = 0.0
 
-    def _update():
-        global _ily_label
-        if _root_ref is None:
-            return
-        # Keep the label instance (avoid flicker); hide via empty text.
-        if _ily_label is None:
-            _ily_label = tk.Label(
-                _root_ref, text="", fg="white", bg="#1c1c1e",
-                font=("Arial", 14, "bold"), padx=12, pady=8,
-            )
-            # Default location: just below the datetime card to avoid overlap.
-            y = 10
-            dtw = _widget_refs.get("datetime")
-            if dtw is not None:
-                try:
-                    y = dtw.winfo_y() + dtw.card_h + 10
-                except Exception:
-                    y = 95
-            _ily_label.place(x=10, y=y)
+def _set_cursor_target(mx, my, enabled):
+    """Thread-safe-ish: hand thread writes, UI loop reads."""
+    _cursor_target["enabled"] = bool(enabled)
+    try:
+        _cursor_target["x"] = int(mx)
+        _cursor_target["y"] = int(my)
+    except Exception:
+        _cursor_target["x"] = 0
+        _cursor_target["y"] = 0
 
-        if remaining <= 0:
-            _ily_label.config(text="")
-            return
-
-        action = "off" if _tracking_enabled else "on"
-        _ily_label.config(text=f"Cursor {action} in {remaining:.1f}s")
-
-    if _root_ref:
-        _root_ref.after(0, _update)
-
-def _schedule_cursor(mx, my, enabled):
-    """Show/hide and move the on-screen cursor indicator (main thread)."""
-    global _cursor_label
+def ui_overlay_loop():
+    """Main-thread loop: renders cursor + countdown without flooding Tk."""
+    global _ily_label, _cursor_label
     if _root_ref is None:
         return
 
-    def _update():
-        global _cursor_label
-        if _root_ref is None:
-            return
-        if not enabled:
-            if _cursor_label is not None:
-                _cursor_label.place_forget()
-            return
+    # Cursor dot
+    if _cursor_target.get("enabled"):
         if _cursor_label is None:
             _cursor_label = tk.Label(
                 _root_ref,
@@ -611,10 +591,37 @@ def _schedule_cursor(mx, my, enabled):
                 font=("Arial", 22, "bold"),
                 bd=0,
             )
-        # Center the dot on the coordinates
-        _cursor_label.place(x=int(mx) - 10, y=int(my) - 18)
+        _cursor_label.place(
+            x=int(_cursor_target.get("x", 0)) - 10,
+            y=int(_cursor_target.get("y", 0)) - 18,
+        )
+    else:
+        if _cursor_label is not None:
+            _cursor_label.place_forget()
 
-    _root_ref.after(0, _update)
+    # ILY countdown label
+    if _ily_label is None:
+        _ily_label = tk.Label(
+            _root_ref, text="", fg="white", bg="#1c1c1e",
+            font=("Arial", 14, "bold"), padx=12, pady=8,
+        )
+        y = 10
+        dtw = _widget_refs.get("datetime")
+        if dtw is not None:
+            try:
+                y = dtw.winfo_y() + dtw.card_h + 10
+            except Exception:
+                y = 95
+        _ily_label.place(x=10, y=y)
+
+    if _ily_remaining > 0:
+        action = "off" if _tracking_enabled else "on"
+        _ily_label.config(text=f"Cursor {action} in {_ily_remaining:.1f}s")
+    else:
+        _ily_label.config(text="")
+
+    # ~30 FPS UI overlay updates (lightweight)
+    _root_ref.after(33, ui_overlay_loop)
 
 def hand_tracking_loop():
     global _tracking_enabled, _detection_result, _running
@@ -706,20 +713,20 @@ def hand_tracking_loop():
                 if elapsed >= ILY_HOLD_SECONDS:
                     _tracking_enabled = not _tracking_enabled
                     ily_start = None
-                    _show_ily_countdown(0)
+                    _set_ily_remaining(0)
                     print(f"[Hand] Tracking {'ON' if _tracking_enabled else 'OFF'}")
                     if not _tracking_enabled and was_fist:
                         try: _mouse.release(Button.left)
                         except Exception: pass
                         was_fist = False
                 else:
-                    _show_ily_countdown(remaining)
+                    _set_ily_remaining(remaining)
             else:
                 ily_start = None
-                _show_ily_countdown(0)
+                _set_ily_remaining(0)
 
             if not _tracking_enabled:
-                _schedule_cursor(0, 0, False)
+                _set_cursor_target(0, 0, False)
                 continue
 
             palm    = lm[9]
@@ -729,7 +736,7 @@ def hand_tracking_loop():
                 _mouse.position = (mx, my)
             except Exception:
                 pass
-            _schedule_cursor(mx, my, True)
+            _set_cursor_target(mx, my, True)
 
             tips    = [8, 12, 16, 20]
             knucks  = [6, 10, 14, 18]
@@ -748,7 +755,8 @@ def hand_tracking_loop():
     finally:
         try: _mouse.release(Button.left)
         except Exception: pass
-        _schedule_cursor(0, 0, False)
+        _set_cursor_target(0, 0, False)
+        _set_ily_remaining(0)
         try: detector.close()
         except Exception: pass
         cap.release()
@@ -1060,6 +1068,9 @@ def main():
         "datetime": dtw_card, "news": news_card,
         "stocks": stock_card, "ai": ai_card, "todo": todo_card,
     })
+
+    # Start UI overlay loop (cursor + countdown)
+    root.after(33, ui_overlay_loop)
 
     # Initial data fetch
     bg(fetch_weather)
