@@ -66,12 +66,12 @@ WAKE_GRAMMAR    = json.dumps(["hey mirror", "[unk]"])
 # Hand tracking  (Pi-friendly settings)
 HAND_MODEL_PATH       = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hand_landmarker.task")
 CAMERA_ID             = 0
-FRAME_WIDTH           = 320     # lower res → less CPU
-FRAME_HEIGHT          = 240
+FRAME_WIDTH           = 240     # lower res → less CPU
+FRAME_HEIGHT          = 180
 SMOOTHING_WINDOW      = 5
-HAND_SKIP_FRAMES      = 1       # process every Nth frame (1 = every frame)
+HAND_SKIP_FRAMES      = 2       # process every Nth frame (1 = every frame)
 ILY_HOLD_SECONDS      = 3.0
-HAND_MAX_FPS          = 20.0    # cap processing rate to reduce CPU
+HAND_MAX_FPS          = 15.0    # cap processing rate to reduce CPU
 
 # ─────────────────────────────────────────────
 # GLOBAL STATE
@@ -602,7 +602,7 @@ def ui_overlay_loop():
          
 
     # ~10 FPS UI overlay updates (lightweight)
-    _root_ref.after(33, ui_overlay_loop)
+    _root_ref.after(100, ui_overlay_loop)
 
 def hand_tracking_loop():
     global _tracking_enabled, _running
@@ -643,8 +643,11 @@ def hand_tracking_loop():
             # Cap processing FPS (prevents pegging CPU on Pi)
             now = time.time()
             min_dt = 1.0 / max(HAND_MAX_FPS, 1.0)
-            if last_tick and (now - last_tick) < min_dt:
-                time.sleep(max(0.0, min_dt - (now - last_tick)))
+            elapsed = now - last_tick if last_tick else min_dt
+            if elapsed < min_dt:
+                time.sleep(min_dt - elapsed)
+            #if last_tick and (now - last_tick) < min_dt:
+             #   time.sleep(max(0.0, min_dt - (now - last_tick)))
             last_tick = time.time()
 
             # Cheap skip: grab (no decode) on skipped frames
