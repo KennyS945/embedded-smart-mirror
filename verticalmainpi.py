@@ -644,9 +644,9 @@ def hand_tracking_loop():
                 base_options=python.BaseOptions(model_asset_path=HAND_MODEL_PATH),
                 running_mode=vision.RunningMode.IMAGE,
                 num_hands=1,
-                min_hand_detection_confidence=0.5,   # slightly increased for accuracy
-                min_hand_presence_confidence=0.5,
-                min_tracking_confidence=0.5,
+                min_hand_detection_confidence=0.3,   # lowered for Pi compatibility
+                min_hand_presence_confidence=0.3,
+                min_tracking_confidence=0.3,
             )
         )
     except Exception as e:
@@ -692,24 +692,26 @@ def hand_tracking_loop():
             lm = result.hand_landmarks[0]
 
             # ILY gesture: thumb + index + pinky out; middle + ring folded
+            # Relaxed thresholds for Raspberry Pi
             is_ily = (
-                lm[4].x < lm[3].x       and   # thumb out (mirrored)
-                lm[8].y  < lm[6].y       and   # index out
-                lm[12].y > lm[10].y      and   # middle in
-                lm[16].y > lm[14].y      and   # ring in
-                lm[20].y < lm[18].y            # pinky out
+                lm[4].x < lm[3].x - 0.02   and   # thumb out (mirrored)
+                lm[8].y  < lm[6].y - 0.02   and   # index out
+                lm[12].y > lm[10].y + 0.02 and   # middle in
+                lm[16].y > lm[14].y + 0.02 and   # ring in
+                lm[20].y < lm[18].y - 0.02        # pinky out
             )
 
             if is_ily:
                 if ily_start is None:
                     ily_start = time.time()
+                    print(f"[Hand] ILY gesture started (tracking: {_tracking_enabled})")
                 elapsed   = time.time() - ily_start
                 remaining = ILY_HOLD_SECONDS - elapsed
                 if elapsed >= ILY_HOLD_SECONDS:
                     _tracking_enabled = not _tracking_enabled
                     ily_start = None
                     _set_ily_remaining(0)
-                    print(f"[Hand] Tracking {'ON' if _tracking_enabled else 'OFF'}")
+                    print(f"[Hand] ✓ Tracking toggled: {'ON' if _tracking_enabled else 'OFF'}")
                     if not _tracking_enabled and was_fist:
                         try: 
                             _mouse.release(Button.left)
@@ -719,6 +721,8 @@ def hand_tracking_loop():
                 else:
                     _set_ily_remaining(remaining)
             else:
+                if ily_start is not None:
+                    print(f"[Hand] ILY gesture interrupted after {time.time() - ily_start:.1f}s")
                 ily_start = None
                 _set_ily_remaining(0)
 
