@@ -109,9 +109,6 @@ _tracking_enabled = False
 _running          = True
 _position_buffer  = []
 _detection_result = None
-_cursor_x = 0
-_cursor_y = 0
-_cursor_overlay = None  # overlay window for custom cursor
 
 # ─────────────────────────────────────────────
 # UTILITIES
@@ -583,15 +580,9 @@ def _set_ily_remaining(remaining):
     except (TypeError, ValueError):
         _ily_remaining = 0.0
 
-def _update_cursor_position(x, y):
-    """Update cursor overlay position (thread-safe)"""
-    global _cursor_x, _cursor_y
-    _cursor_x = x
-    _cursor_y = y
-
 def ui_overlay_loop():
-    """Main-thread loop: renders countdown and custom cursor."""
-    global _ily_label, _cursor_overlay
+    """Main-thread loop: renders countdown."""
+    global _ily_label
     if _root_ref is None:
         return
     
@@ -627,51 +618,6 @@ def ui_overlay_loop():
             # Show system cursor when hand control is off
             _root_ref.config(cursor="")
     except Exception:
-        pass
-    
-    # Handle custom cursor dot (small floating window)
-    try:
-        if _tracking_enabled:
-            # Create floating dot window if needed
-            if _cursor_overlay is None:
-                _cursor_overlay = tk.Toplevel(_root_ref)
-                _cursor_overlay.overrideredirect(True)  # Remove window decorations
-                _cursor_overlay.attributes("-topmost", True)  # Always on top
-                _cursor_overlay.attributes("-alpha", 0.0)  # Start invisible
-                _cursor_overlay.geometry("30x30+0+0")
-                _cursor_overlay.configure(bg="black")
-                
-                # Create small canvas for dot
-                canvas = tk.Canvas(
-                    _cursor_overlay, width=30, height=30,
-                    bg="black", highlightthickness=0, bd=0
-                )
-                canvas.pack(fill="both", expand=True)
-                _cursor_overlay.canvas = canvas
-                _cursor_overlay.attributes("-alpha", 0.8)  # Make visible
-            
-            # Update dot position
-            x, y = _cursor_x, _cursor_y
-            canvas = _cursor_overlay.canvas
-            canvas.delete("all")
-            
-            # Draw cyan dot (circle in center)
-            dot_r = 5
-            canvas.create_oval(
-                15 - dot_r, 15 - dot_r, 15 + dot_r, 15 + dot_r,
-                fill="#00CCFF", outline="#00CCFF", tags="dot"
-            )
-            
-            # Position window at cursor location (centered on dot)
-            screen_x = x - 15
-            screen_y = y - 15
-            _cursor_overlay.geometry(f"30x30+{screen_x}+{screen_y}")
-        else:
-            # Hide cursor overlay when hand control is off
-            if _cursor_overlay is not None:
-                _cursor_overlay.attributes("-alpha", 0.0)
-    except Exception as e:
-        # Silently handle errors in cursor rendering
         pass
     
     # ~30 FPS UI overlay updates
@@ -782,10 +728,6 @@ def hand_tracking_loop():
             palm    = lm[9]
             sx, sy  = int(palm.x * screen_w), int(palm.y * screen_h)
             mx, my  = _smooth(sx, sy)
-            
-            # Update cursor position for overlay
-            _update_cursor_position(mx, my)
-            
             try:
                 _mouse.position = (mx, my)
             except Exception:
@@ -1070,17 +1012,8 @@ class AIResponseCard(DraggableCard):
 # EXIT
 # ─────────────────────────────────────────────
 def close_app(event=None):
-    global _running, _cursor_overlay
+    global _running
     _running = False
-    
-    # Clean up cursor overlay
-    if _cursor_overlay is not None:
-        try:
-            _cursor_overlay.destroy()
-        except Exception:
-            pass
-        _cursor_overlay = None
-    
     if _root_ref:
         try: _root_ref.quit(); _root_ref.destroy()
         except Exception: pass
