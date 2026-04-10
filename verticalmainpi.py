@@ -629,63 +629,43 @@ def ui_overlay_loop():
     except Exception:
         pass
     
-    # Handle custom cursor overlay
+    # Handle custom cursor dot (small floating window)
     try:
-        sw = _root_ref.winfo_screenwidth()
-        sh = _root_ref.winfo_screenheight()
-        
         if _tracking_enabled:
-            # Create overlay window if needed
+            # Create floating dot window if needed
             if _cursor_overlay is None:
                 _cursor_overlay = tk.Toplevel(_root_ref)
-                _cursor_overlay.attributes("-fullscreen", True)
-                _cursor_overlay.attributes("-topmost", True)
-                _cursor_overlay.attributes("-alpha", 0.0)  # start transparent
+                _cursor_overlay.overrideredirect(True)  # Remove window decorations
+                _cursor_overlay.attributes("-topmost", True)  # Always on top
+                _cursor_overlay.attributes("-alpha", 0.0)  # Start invisible
+                _cursor_overlay.geometry("30x30+0+0")
                 _cursor_overlay.configure(bg="black")
-                _cursor_overlay.bind("<Button-1>", lambda e: None)  # prevent interaction
                 
+                # Create small canvas for dot
                 canvas = tk.Canvas(
-                    _cursor_overlay, width=sw, height=sh,
+                    _cursor_overlay, width=30, height=30,
                     bg="black", highlightthickness=0, bd=0
                 )
                 canvas.pack(fill="both", expand=True)
                 _cursor_overlay.canvas = canvas
+                _cursor_overlay.attributes("-alpha", 0.8)  # Make visible
             
-            # Update cursor position on canvas
-            canvas = _cursor_overlay.canvas
-            canvas.delete("cursor")
-            
-            # Draw semi-transparent circle at cursor position
+            # Update dot position
             x, y = _cursor_x, _cursor_y
-            r = CURSOR_RADIUS
+            canvas = _cursor_overlay.canvas
+            canvas.delete("all")
             
-            # Draw circle outline (cyan)
+            # Draw cyan dot (circle in center)
+            dot_r = 5
             canvas.create_oval(
-                x - r, y - r, x + r, y + r,
-                outline="#00CCFF", width=CURSOR_OUTLINE_WIDTH,
-                tags="cursor"
-            )
-            # Draw crosshair
-            canvas.create_line(
-                x - r - 5, y, x - r - 10, y,
-                fill="#00CCFF", width=1, tags="cursor"
-            )
-            canvas.create_line(
-                x + r + 5, y, x + r + 10, y,
-                fill="#00CCFF", width=1, tags="cursor"
-            )
-            canvas.create_line(
-                x, y - r - 5, x, y - r - 10,
-                fill="#00CCFF", width=1, tags="cursor"
-            )
-            canvas.create_line(
-                x, y + r + 5, x, y + r + 10,
-                fill="#00CCFF", width=1, tags="cursor"
+                15 - dot_r, 15 - dot_r, 15 + dot_r, 15 + dot_r,
+                fill="#00CCFF", outline="#00CCFF", tags="dot"
             )
             
-            # Ensure window is visible and on top
-            _cursor_overlay.attributes("-alpha", 0.7)
-            _cursor_overlay.lift()
+            # Position window at cursor location (centered on dot)
+            screen_x = x - 15
+            screen_y = y - 15
+            _cursor_overlay.geometry(f"30x30+{screen_x}+{screen_y}")
         else:
             # Hide cursor overlay when hand control is off
             if _cursor_overlay is not None:
