@@ -7,6 +7,7 @@ import threading
 import time
 import uuid
 import tkinter as tk
+from tkinter import*
 from datetime import datetime
 
 import cv2
@@ -105,6 +106,8 @@ _tracking_enabled = False
 _running          = True
 _position_buffer  = []
 _detection_result = None
+
+
 
 # ─────────────────────────────────────────────
 # UTILITIES
@@ -1030,6 +1033,7 @@ def main():
 
     canvas = tk.Frame(root, bg=BG_COLOR)
     canvas.pack(fill="both", expand=True)
+    
 
     # Layout – sensible defaults for a 1920×1080 or similar Pi display
     todo_h = min(72 + TODO_MAX_VISIBLE * TODO_LINE_HEIGHT + 36, sh - 120)
