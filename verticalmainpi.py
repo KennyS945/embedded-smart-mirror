@@ -63,7 +63,7 @@ SAMPLE_RATE     = 16000
 BLOCK_SIZE      = 3200          # ~0.2 s – lower latency on ARM
 WAKE_GRAMMAR    = json.dumps(["hey mirror", "[unk]"])
 
-# Hand tracking  (Pi-friendly settings)
+# Hand tracking  (Pi-friendly settings - optimized for speed)
 HAND_MODEL_PATH       = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hand_landmarker.task")
 CAMERA_ID             = 0
 FRAME_WIDTH           = 320     # lower res → less CPU
@@ -71,12 +71,7 @@ FRAME_HEIGHT          = 240
 SMOOTHING_WINDOW      = 3       # reduced for faster response
 HAND_SKIP_FRAMES      = 1       # process every Nth frame (1 = every frame)
 ILY_HOLD_SECONDS      = 3.0
-HAND_MAX_FPS          = 30.0    # increased to 30 FPS for better responsiveness
-
-# Custom cursor settings
-CURSOR_RADIUS         = 15      # pixels
-CURSOR_OUTLINE_WIDTH  = 2       # pixels
-CURSOR_COLOR          = "rgba(100, 200, 255, 0.5)"  # semi-transparent cyan
+HAND_MAX_FPS          = 30.0    # increased for responsiveness
 
 # ─────────────────────────────────────────────
 # GLOBAL STATE
@@ -493,7 +488,7 @@ def voice_loop():
                 data = _audio_queue.get()
 
                 if state == "wake":
-                    # DISABLE VOICE ACTIVATION IF HAND CONTROL IS ACTIVE
+                    # ONLY FEATURE: Disable voice when hand control is on
                     if _tracking_enabled:
                         continue
                     
@@ -556,16 +551,15 @@ def _get_screen_size():
         return 1920, 1080
 
 def _smooth(x, y):
-    """Optimized smoothing with reduced buffer for lower latency"""
+    """Optimized smoothing with weighted average for faster response"""
     _position_buffer.append((x, y))
     if len(_position_buffer) > SMOOTHING_WINDOW:
         _position_buffer.pop(0)
     
-    # Use weighted moving average for faster response
     if len(_position_buffer) == 1:
         return x, y
     
-    # More weight on recent positions
+    # Weighted moving average - recent positions get more weight
     weights = [i + 1 for i in range(len(_position_buffer))]
     total_weight = sum(weights)
     ax = int(sum(px * w for (px, _), w in zip(_position_buffer, weights)) / total_weight)
@@ -581,17 +575,20 @@ def _set_ily_remaining(remaining):
         _ily_remaining = 0.0
 
 def ui_overlay_loop():
-    """Main-thread loop: renders countdown."""
+    """Main-thread loop: renders countdown without flooding Tk."""
     global _ily_label
     if _root_ref is None:
         return
-    
-    # Handle ILY countdown
+        
     if _ily_remaining <= 0: 
         if _ily_label is not None: 
+            #remove label from screen completely 
             _ily_label.destroy()
+            #reset to none so it can be recreated fresh next time
             _ily_label = None
     else:
+
+    # ILY countdown label
         if _ily_label is None:
             _ily_label = tk.Label(
                 _root_ref, text="", fg="white", bg="#1c1c1e",
@@ -606,21 +603,16 @@ def ui_overlay_loop():
                     y = 95
             _ily_label.place(x=10, y=y)
         
+        
+
+    #if _ily_remaining > 0:
         action = "off" if _tracking_enabled else "on"
         _ily_label.config(text=f"Cursor {action} in {_ily_remaining:.1f}s")
-    
-    # Handle system cursor visibility
-    try:
-        if _tracking_enabled:
-            # Hide system cursor when hand control is active
-            _root_ref.config(cursor="none")
-        else:
-            # Show system cursor when hand control is off
-            _root_ref.config(cursor="")
-    except Exception:
-        pass
-    
-    # ~30 FPS UI overlay updates
+    #else:
+        #_ily_label.config(text="")
+         
+
+    # ~10 FPS UI overlay updates (lightweight)
     _root_ref.after(33, ui_overlay_loop)
 
 def hand_tracking_loop():
@@ -644,7 +636,7 @@ def hand_tracking_loop():
                 base_options=python.BaseOptions(model_asset_path=HAND_MODEL_PATH),
                 running_mode=vision.RunningMode.IMAGE,
                 num_hands=1,
-                min_hand_detection_confidence=0.3,   # lowered for Pi compatibility
+                min_hand_detection_confidence=0.3,   # optimized for Pi
                 min_hand_presence_confidence=0.3,
                 min_tracking_confidence=0.3,
             )
@@ -692,26 +684,24 @@ def hand_tracking_loop():
             lm = result.hand_landmarks[0]
 
             # ILY gesture: thumb + index + pinky out; middle + ring folded
-            # Relaxed thresholds for Raspberry Pi
             is_ily = (
-                lm[4].x < lm[3].x - 0.02   and   # thumb out (mirrored)
-                lm[8].y  < lm[6].y - 0.02   and   # index out
-                lm[12].y > lm[10].y + 0.02 and   # middle in
-                lm[16].y > lm[14].y + 0.02 and   # ring in
-                lm[20].y < lm[18].y - 0.02        # pinky out
+                lm[4].x < lm[3].x       and   # thumb out (mirrored)
+                lm[8].y  < lm[6].y       and   # index out
+                lm[12].y > lm[10].y      and   # middle in
+                lm[16].y > lm[14].y      and   # ring in
+                lm[20].y < lm[18].y            # pinky out
             )
 
             if is_ily:
                 if ily_start is None:
                     ily_start = time.time()
-                    print(f"[Hand] ILY gesture started (tracking: {_tracking_enabled})")
                 elapsed   = time.time() - ily_start
                 remaining = ILY_HOLD_SECONDS - elapsed
                 if elapsed >= ILY_HOLD_SECONDS:
                     _tracking_enabled = not _tracking_enabled
                     ily_start = None
                     _set_ily_remaining(0)
-                    print(f"[Hand] ✓ Tracking toggled: {'ON' if _tracking_enabled else 'OFF'}")
+                    print(f"[Hand] Tracking {'ON' if _tracking_enabled else 'OFF'}")
                     if not _tracking_enabled and was_fist:
                         try: 
                             _mouse.release(Button.left)
@@ -721,8 +711,6 @@ def hand_tracking_loop():
                 else:
                     _set_ily_remaining(remaining)
             else:
-                if ily_start is not None:
-                    print(f"[Hand] ILY gesture interrupted after {time.time() - ily_start:.1f}s")
                 ily_start = None
                 _set_ily_remaining(0)
 
