@@ -72,7 +72,7 @@ FRAME_HEIGHT          = 180
 SMOOTHING_WINDOW      = 5
 HAND_SKIP_FRAMES      = 2       # process every Nth frame (1 = every frame)
 ILY_HOLD_SECONDS      = 3.0
-HAND_MAX_FPS          = 15.0    # cap processing rate to reduce CPU
+HAND_MAX_FPS          = 30.0    # cap processing rate to reduce CPU
 
 # ─────────────────────────────────────────────
 # GLOBAL STATE
