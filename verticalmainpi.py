@@ -68,10 +68,15 @@ HAND_MODEL_PATH       = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 CAMERA_ID             = 0
 FRAME_WIDTH           = 320     # lower res → less CPU
 FRAME_HEIGHT          = 240
-SMOOTHING_WINDOW      = 5
+SMOOTHING_WINDOW      = 3       # reduced for faster response
 HAND_SKIP_FRAMES      = 1       # process every Nth frame (1 = every frame)
 ILY_HOLD_SECONDS      = 3.0
-HAND_MAX_FPS          = 20.0    # cap processing rate to reduce CPU
+HAND_MAX_FPS          = 30.0    # increased to 30 FPS for better responsiveness
+
+# Custom cursor settings
+CURSOR_RADIUS         = 15      # pixels
+CURSOR_OUTLINE_WIDTH  = 2       # pixels
+CURSOR_COLOR          = "rgba(100, 200, 255, 0.5)"  # semi-transparent cyan
 
 # ─────────────────────────────────────────────
 # GLOBAL STATE
@@ -104,6 +109,9 @@ _tracking_enabled = False
 _running          = True
 _position_buffer  = []
 _detection_result = None
+_cursor_x = 0
+_cursor_y = 0
+_cursor_overlay = None  # overlay window for custom cursor
 
 # ─────────────────────────────────────────────
 # UTILITIES
@@ -488,6 +496,10 @@ def voice_loop():
                 data = _audio_queue.get()
 
                 if state == "wake":
+                    # DISABLE VOICE ACTIVATION IF HAND CONTROL IS ACTIVE
+                    if _tracking_enabled:
+                        continue
+                    
                     detected = False
                     if wake_rec.AcceptWaveform(data):
                         if "hey mirror" in json.loads(wake_rec.Result()).get("text", "").lower():
@@ -547,11 +559,20 @@ def _get_screen_size():
         return 1920, 1080
 
 def _smooth(x, y):
+    """Optimized smoothing with reduced buffer for lower latency"""
     _position_buffer.append((x, y))
     if len(_position_buffer) > SMOOTHING_WINDOW:
         _position_buffer.pop(0)
-    ax = int(sum(px for px, _ in _position_buffer) / len(_position_buffer))
-    ay = int(sum(py for _, py in _position_buffer) / len(_position_buffer))
+    
+    # Use weighted moving average for faster response
+    if len(_position_buffer) == 1:
+        return x, y
+    
+    # More weight on recent positions
+    weights = [i + 1 for i in range(len(_position_buffer))]
+    total_weight = sum(weights)
+    ax = int(sum(px * w for (px, _), w in zip(_position_buffer, weights)) / total_weight)
+    ay = int(sum(py * w for (_, py), w in zip(_position_buffer, weights)) / total_weight)
     return ax, ay
 
 def _set_ily_remaining(remaining):
@@ -562,21 +583,24 @@ def _set_ily_remaining(remaining):
     except (TypeError, ValueError):
         _ily_remaining = 0.0
 
+def _update_cursor_position(x, y):
+    """Update cursor overlay position (thread-safe)"""
+    global _cursor_x, _cursor_y
+    _cursor_x = x
+    _cursor_y = y
+
 def ui_overlay_loop():
-    """Main-thread loop: renders countdown without flooding Tk."""
-    global _ily_label
+    """Main-thread loop: renders countdown and custom cursor."""
+    global _ily_label, _cursor_overlay
     if _root_ref is None:
         return
-        
+    
+    # Handle ILY countdown
     if _ily_remaining <= 0: 
         if _ily_label is not None: 
-            #remove label from screen completely 
             _ily_label.destroy()
-            #reset to none so it can be recreated fresh next time
             _ily_label = None
     else:
-
-    # ILY countdown label
         if _ily_label is None:
             _ily_label = tk.Label(
                 _root_ref, text="", fg="white", bg="#1c1c1e",
@@ -591,16 +615,86 @@ def ui_overlay_loop():
                     y = 95
             _ily_label.place(x=10, y=y)
         
-        
-
-    #if _ily_remaining > 0:
         action = "off" if _tracking_enabled else "on"
         _ily_label.config(text=f"Cursor {action} in {_ily_remaining:.1f}s")
-    #else:
-        #_ily_label.config(text="")
-         
-
-    # ~10 FPS UI overlay updates (lightweight)
+    
+    # Handle system cursor visibility
+    try:
+        if _tracking_enabled:
+            # Hide system cursor when hand control is active
+            _root_ref.config(cursor="none")
+        else:
+            # Show system cursor when hand control is off
+            _root_ref.config(cursor="")
+    except Exception:
+        pass
+    
+    # Handle custom cursor overlay
+    try:
+        sw = _root_ref.winfo_screenwidth()
+        sh = _root_ref.winfo_screenheight()
+        
+        if _tracking_enabled:
+            # Create overlay window if needed
+            if _cursor_overlay is None:
+                _cursor_overlay = tk.Toplevel(_root_ref)
+                _cursor_overlay.attributes("-fullscreen", True)
+                _cursor_overlay.attributes("-topmost", True)
+                _cursor_overlay.attributes("-alpha", 0.0)  # start transparent
+                _cursor_overlay.configure(bg="black")
+                _cursor_overlay.bind("<Button-1>", lambda e: None)  # prevent interaction
+                
+                canvas = tk.Canvas(
+                    _cursor_overlay, width=sw, height=sh,
+                    bg="black", highlightthickness=0, bd=0
+                )
+                canvas.pack(fill="both", expand=True)
+                _cursor_overlay.canvas = canvas
+            
+            # Update cursor position on canvas
+            canvas = _cursor_overlay.canvas
+            canvas.delete("cursor")
+            
+            # Draw semi-transparent circle at cursor position
+            x, y = _cursor_x, _cursor_y
+            r = CURSOR_RADIUS
+            
+            # Draw circle outline (cyan)
+            canvas.create_oval(
+                x - r, y - r, x + r, y + r,
+                outline="#00CCFF", width=CURSOR_OUTLINE_WIDTH,
+                tags="cursor"
+            )
+            # Draw crosshair
+            canvas.create_line(
+                x - r - 5, y, x - r - 10, y,
+                fill="#00CCFF", width=1, tags="cursor"
+            )
+            canvas.create_line(
+                x + r + 5, y, x + r + 10, y,
+                fill="#00CCFF", width=1, tags="cursor"
+            )
+            canvas.create_line(
+                x, y - r - 5, x, y - r - 10,
+                fill="#00CCFF", width=1, tags="cursor"
+            )
+            canvas.create_line(
+                x, y + r + 5, x, y + r + 10,
+                fill="#00CCFF", width=1, tags="cursor"
+            )
+            
+            # Ensure window is visible and on top
+            _cursor_overlay.attributes("-alpha", 0.7)
+            _cursor_overlay.lift()
+        else:
+            # Hide cursor overlay when hand control is off
+            if _cursor_overlay is not None:
+                _cursor_overlay.attributes("-alpha", 0.0)
+    except Exception as e:
+        # Silently handle errors in cursor rendering
+        pass
+    
+    # ~30 FPS UI overlay updates
     _root_ref.after(33, ui_overlay_loop)
 
 def hand_tracking_loop():
@@ -624,9 +718,9 @@ def hand_tracking_loop():
                 base_options=python.BaseOptions(model_asset_path=HAND_MODEL_PATH),
                 running_mode=vision.RunningMode.IMAGE,
                 num_hands=1,
-                min_hand_detection_confidence=0.45,   # slightly relaxed for Pi
-                min_hand_presence_confidence=0.45,
-                min_tracking_confidence=0.45,
+                min_hand_detection_confidence=0.5,   # slightly increased for accuracy
+                min_hand_presence_confidence=0.5,
+                min_tracking_confidence=0.5,
             )
         )
     except Exception as e:
@@ -708,6 +802,10 @@ def hand_tracking_loop():
             palm    = lm[9]
             sx, sy  = int(palm.x * screen_w), int(palm.y * screen_h)
             mx, my  = _smooth(sx, sy)
+            
+            # Update cursor position for overlay
+            _update_cursor_position(mx, my)
+            
             try:
                 _mouse.position = (mx, my)
             except Exception:
@@ -992,8 +1090,17 @@ class AIResponseCard(DraggableCard):
 # EXIT
 # ─────────────────────────────────────────────
 def close_app(event=None):
-    global _running
+    global _running, _cursor_overlay
     _running = False
+    
+    # Clean up cursor overlay
+    if _cursor_overlay is not None:
+        try:
+            _cursor_overlay.destroy()
+        except Exception:
+            pass
+        _cursor_overlay = None
+    
     if _root_ref:
         try: _root_ref.quit(); _root_ref.destroy()
         except Exception: pass
