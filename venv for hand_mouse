@@ -17,3 +17,10 @@ curl -o hand_landmarker.task https://storage.googleapis.com/mediapipe-models/han
 source ~/myenv311/bin/activate
 
 
+(myenv311) group6@CSE389-Group6:~/hand_mouse $ python verticalmainpi.py
+Traceback (most recent call last):
+  File "/home/group6/hand_mouse/verticalmainpi.py", line 31, in <module>
+    GPIO.setup(PIR_PIN, GPIO.IN)
+RuntimeError: Cannot determine SOC peripheral base address
+
+
