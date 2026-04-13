@@ -23,4 +23,8 @@ Traceback (most recent call last):
     GPIO.setup(PIR_PIN, GPIO.IN)
 RuntimeError: Cannot determine SOC peripheral base address
 
+scp verticalmainpi.py pi@<pi-ip-address>:/home/pi/
+ssh pi@<pi-ip-address>
+source myenv311/bin/activate
+python verticalmainpi.py
 
