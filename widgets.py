@@ -28,9 +28,10 @@ STOCK_REFRESH_MS   =  5 * 60 * 1000
 
 # Import voice control functions
 from voicecontrol import (
-    _weather_cache, _news_cache, _stock_cache, _ui_queue, _todo_tasks,
+    _ui_queue, _todo_tasks,
     fetch_weather, fetch_news, fetch_stocks, _redraw_stocks, bg
 )
+import voicecontrol
 
 # Import hand control
 import handcontrol
@@ -161,9 +162,10 @@ class DateTimeWeatherCard(DraggableCard):
 
     def _tick(self):
         now = datetime.now()
+        weather_text = voicecontrol._weather_cache[0] if voicecontrol._weather_cache else "Loading..."
         self.itemconfig(self._line, text=(
             f"{now.strftime('%a, %b %d')}   |   "
-            f"{now.strftime('%I:%M:%S %p').lstrip('0')}   |   {_weather_cache}"
+            f"{now.strftime('%I:%M:%S %p').lstrip('0')}   |   {weather_text}"
         ))
         self.after(CLOCK_REFRESH_MS, self._tick)
 
@@ -189,9 +191,9 @@ class NewsCard(DraggableCard):
         self.after(NEWS_REFRESH_MS, self._sched_news)
 
     def _cycle(self):
-        if _news_cache:
-            self._idx %= len(_news_cache)
-            item = _news_cache[self._idx]
+        if voicecontrol._news_cache:
+            self._idx %= len(voicecontrol._news_cache)
+            item = voicecontrol._news_cache[self._idx]
             self.itemconfig(self._src_id, text=item["source"])
             self.itemconfig(self._pub_id, text=item["pub"])
             self.itemconfig(self._hdl_id, text=item["title"])
@@ -203,7 +205,7 @@ class StocksCard(DraggableCard):
     def __init__(self, parent, x, y):
         super().__init__(parent, width=360, height=155, title="Stocks")
         self._line_ids = []
-        for i in range(len(_stock_cache)):
+        for i in range(len(voicecontrol._stock_cache)):
             tid = self.create_text(20, 48 + i*34, text="Loading...",
                                    fill=FG_COLOR, font=FONT_COMPACT, anchor="nw", width=320)
             self._line_ids.append(tid)
@@ -220,10 +222,10 @@ class StocksCard(DraggableCard):
 
     def _apply(self):
         for i, tid in enumerate(self._line_ids):
-            txt = _stock_cache[i] if i < len(_stock_cache) else "N/A"
+            txt = voicecontrol._stock_cache[i] if i < len(voicecontrol._stock_cache) else "N/A"
             color = "#34c759" if "▲" in txt else ("#ff453a" if "▼" in txt else FG_COLOR)
             self.itemconfig(tid, text=txt, fill=color)
-        if any("Loading" in s for s in _stock_cache):
+        if any("Loading" in s for s in voicecontrol._stock_cache):
             self.after(2000, self._apply)
 
     def resync_lines(self):
@@ -253,7 +255,7 @@ class TodoCard(DraggableCard):
             except tk.TclError: pass
         self._row_ids.clear()
         y0    = 48
-        tasks = _todo_tasks[:TODO_MAX_VISIBLE]
+        tasks = voicecontrol._todo_tasks[:TODO_MAX_VISIBLE]
         if not tasks:
             self._row_ids.append(self.create_text(
                 24, y0, text="No tasks – ask the mirror to add one",
@@ -264,7 +266,7 @@ class TodoCard(DraggableCard):
                     24, y0, text=f"• {t['text']}",
                     fill=FG_COLOR, font=FONT_COMPACT, anchor="nw", width=TODO_CARD_WIDTH-40))
                 y0 += TODO_LINE_HEIGHT
-            ov = len(_todo_tasks) - TODO_MAX_VISIBLE
+            ov = len(voicecontrol._todo_tasks) - TODO_MAX_VISIBLE
             if ov > 0:
                 self._row_ids.append(self.create_text(
                     24, y0, text=f"+ {ov} more",
