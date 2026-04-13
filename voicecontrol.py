@@ -35,9 +35,9 @@ BLOCK_SIZE      = 3200          # ~0.2 s – lower latency on ARM
 WAKE_GRAMMAR    = json.dumps(["hey mirror", "[unk]"])
 
 # Global state
-_weather_cache    = "Loading..."
+_weather_cache    = ["Loading..."]
 _weather_api_data = {}
-_news_cache       = []
+_news_cache       = [{"title": "Loading...", "source": "", "pub": "", "description": "", "url": "", "author": ""}]
 _stock_cache      = ["Loading..." for _ in STOCK_SYMBOLS]
 _todo_tasks       = []
 
@@ -171,7 +171,7 @@ def get_todo_context_lines():
 # WEATHER / NEWS / STOCKS
 # ─────────────────────────────────────────────
 def fetch_weather():
-    global _weather_cache, _weather_api_data
+    global _weather_api_data
     try:
         r = requests.get(
             "https://api.openweathermap.org/data/2.5/weather",
@@ -180,14 +180,20 @@ def fetch_weather():
         )
         data = r.json()
         if "main" not in data:
-            _weather_cache = "Weather N/A"; _weather_api_data = {}; return
+            _weather_api_data = {}
+            _weather_cache.clear()
+            _weather_cache.append("Weather N/A")
+            return
         _weather_api_data = data
-        _weather_cache = f"{data['main']['temp']:.0f}°F  {data['weather'][0]['description'].title()}"
+        temp = f"{data['main']['temp']:.0f}°F  {data['weather'][0]['description'].title()}"
+        _weather_cache.clear()
+        _weather_cache.append(temp)
     except Exception:
-        _weather_cache = "Weather N/A"; _weather_api_data = {}
+        _weather_api_data = {}
+        _weather_cache.clear()
+        _weather_cache.append("Weather N/A")
 
 def fetch_news():
-    global _news_cache
     try:
         r = requests.get(
             "https://newsapi.org/v2/top-headlines",
@@ -211,14 +217,15 @@ def fetch_news():
                 "url":         (a.get("url") or "").strip(),
                 "author":      (a.get("author") or "").strip(),
             })
-        _news_cache = results or [{"title": "News unavailable", "source": "", "pub": "",
-                                   "description": "", "url": "", "author": ""}]
+        _news_cache.clear()
+        _news_cache.extend(results or [{"title": "News unavailable", "source": "", "pub": "",
+                                   "description": "", "url": "", "author": ""}])
     except Exception:
-        _news_cache = [{"title": "News unavailable", "source": "", "pub": "",
-                        "description": "", "url": "", "author": ""}]
+        _news_cache.clear()
+        _news_cache.append({"title": "News unavailable", "source": "", "pub": "",
+                        "description": "", "url": "", "author": ""})
 
 def fetch_stocks():
-    global _stock_cache
     results = []
     for sym in STOCK_SYMBOLS:
         try:
@@ -231,7 +238,8 @@ def fetch_stocks():
             results.append(f"{sym}  ${price:.2f}  {arrow}{abs(change):.2f} ({abs(pct):.2f}%)")
         except Exception:
             results.append(f"{sym}: N/A")
-    _stock_cache = results
+    _stock_cache.clear()
+    _stock_cache.extend(results)
     if _root_ref:
         _root_ref.after(0, _redraw_stocks)
 
@@ -244,7 +252,8 @@ def _redraw_stocks():
 # ─────────────────────────────────────────────
 def _fmt_weather():
     if not _weather_api_data:
-        return f"(no structured data; banner: {_weather_cache})"
+        weather_str = _weather_cache[0] if _weather_cache else "Loading..."
+        return f"(no structured data; banner: {weather_str})"
     try:
         return json.dumps(_weather_api_data, indent=2, ensure_ascii=False)
     except Exception:
