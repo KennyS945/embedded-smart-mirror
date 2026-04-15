@@ -45,3 +45,29 @@ try:
 except KeyboardInterrupt:
     led.off()
     print("Exiting cleanly")
+
+
+
+Traceback (most recent call last):
+  File "/home/group6/hand_mouse/led_strip.py", line 11, in <module>
+    pir = MotionSensor(PIR_PIN, threshold=0.5, queue_len=5)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/group6/myenv311/lib/python3.11/site-packages/gpiozero/devices.py", line 108, in __call__
+    self = super().__call__(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/group6/myenv311/lib/python3.11/site-packages/gpiozero/input_devices.py", line 588, in __init__
+    super().__init__(
+  File "/home/group6/myenv311/lib/python3.11/site-packages/gpiozero/input_devices.py", line 257, in __init__
+    super().__init__(
+  File "/home/group6/myenv311/lib/python3.11/site-packages/gpiozero/mixins.py", line 243, in __init__
+    super().__init__(*args, **kwargs)
+  File "/home/group6/myenv311/lib/python3.11/site-packages/gpiozero/input_devices.py", line 84, in __init__
+    self.pin.pull = pull
+    ^^^^^^^^^^^^^
+  File "/home/group6/myenv311/lib/python3.11/site-packages/gpiozero/pins/__init__.py", line 357, in <lambda>
+    lambda self, value: self._set_pull(value),
+                        ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/group6/myenv311/lib/python3.11/site-packages/gpiozero/pins/lgpio.py", line 186, in _set_pull
+    raise PinFixedPull(
+gpiozero.exc.PinFixedPull: GPIO2 has a physical pull-up resistor
+
