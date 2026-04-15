@@ -1,65 +1,49 @@
+pip install lgpio gpiozero rpi_ws281x adafruit-circuitpython-neopixel
 import time
 import board
 import neopixel
 from gpiozero import MotionSensor
 
-# -----------------------------
-# Configuration
-# -----------------------------
-PIR_PIN = 17                  # BCM numbering; PIR OUT -> GPIO17
-LED_PIN = board.D18           # NeoPixel data pin
-NUM_LEDS = 30                 # change to your strip length
-BRIGHTNESS = 1.0
-CHECK_INTERVAL = 300          # 5 minutes = 300 seconds
+# --- Configuration ---
+PIR_PIN  = 2           # GPIO 2 for PIR signal
+LED_PIN  = board.D18   # GPIO 18 required for WS2812B
+NUM_LEDS = 30          # change to your actual LED count
+COLOR    = (255, 200, 150)  # warm white — change to any RGB value
+TIMEOUT  = 10          # seconds of no motion before strip turns off
 
-WHITE = (255, 255, 255)
-OFF = (0, 0, 0)
-
-# -----------------------------
-# Setup
-# -----------------------------
-pir = MotionSensor(PIR_PIN)
-pixels = neopixel.NeoPixel(
-    LED_PIN,
-    NUM_LEDS,
-    brightness=BRIGHTNESS,
-    auto_write=False
-)
+# --- Setup ---
+pir    = MotionSensor(PIR_PIN)
+pixels = neopixel.NeoPixel(LED_PIN, NUM_LEDS, brightness=1.0, auto_write=True)
 
 def strip_on():
-    pixels.fill(WHITE)
-    pixels.show()
-    print("[STRIP] White ON")
+    pixels.fill(COLOR)
+    print("[STRIP] On")
 
 def strip_off():
-    pixels.fill(OFF)
-    pixels.show()
-    print("[STRIP] OFF")
+    pixels.fill((0, 0, 0))
+    print("[STRIP] Off")
+
+# --- Main loop ---
+last_motion = 0
+strip_is_on = False
 
 try:
     strip_off()
     print("Waiting for motion...")
 
     while True:
-        # Wait until motion is first detected
-        pir.wait_for_motion()
-        print("[PIR] Motion detected")
-        strip_on()
-
-        # Keep checking every 5 minutes
-        while True:
-            time.sleep(CHECK_INTERVAL)
-
-            if pir.motion_detected:
-                print("[PIR] Motion still present -> keep lights ON for another 5 minutes")
+        if pir.motion_detected:
+            last_motion = time.time()
+            if not strip_is_on:
                 strip_on()
-            else:
-                print("[PIR] No motion -> lights OFF")
-                strip_off()
-                break
+                strip_is_on = True
+
+        elif strip_is_on and time.time() - last_motion > TIMEOUT:
+            strip_off()
+            strip_is_on = False
+
+        time.sleep(0.3)
 
 except KeyboardInterrupt:
-    print("Exiting...")
-
-finally:
     strip_off()
+    print("Exiting cleanly")
