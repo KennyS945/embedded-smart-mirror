@@ -118,10 +118,6 @@ def apply_todo_from_ai(todo_block):
         return False
 
     full_set = todo_block.get("set")
-    # Normalize set to list (handle string case)
-    if isinstance(full_set, str):
-        full_set = [full_set]
-    
     if isinstance(full_set, list):
         _todo_tasks = [
             {"id": uuid.uuid4().hex[:12], "text": i.strip()}
@@ -136,12 +132,7 @@ def apply_todo_from_ai(todo_block):
     if todo_block.get("clear") is True and _todo_tasks:
         _todo_tasks = []; changed = True
 
-    # Normalize remove_indices to list (handle string case)
-    remove_indices = todo_block.get("remove_indices") or []
-    if isinstance(remove_indices, str):
-        remove_indices = [remove_indices]
-    
-    for v in remove_indices:
+    for v in (todo_block.get("remove_indices") or []):
         try:
             idx = int(v) - 1
             if 0 <= idx < len(_todo_tasks):
@@ -149,23 +140,13 @@ def apply_todo_from_ai(todo_block):
         except (TypeError, ValueError):
             pass
 
-    # Normalize remove to list (handle string case)
-    remove = todo_block.get("remove") or []
-    if isinstance(remove, str):
-        remove = [remove]
-    
-    for r in remove:
+    for r in (todo_block.get("remove") or []):
         if isinstance(r, str) and r.strip():
             before = len(_todo_tasks)
             _todo_tasks = [x for x in _todo_tasks if x["text"].lower() != r.strip().lower()]
             if len(_todo_tasks) < before: changed = True
 
-    # Normalize add to list (handle string case)
-    add = todo_block.get("add") or []
-    if isinstance(add, str):
-        add = [add]
-    
-    for a in add:
+    for a in (todo_block.get("add") or []):
         if isinstance(a, str) and a.strip():
             t = a.strip()
             if not any(x["text"].lower() == t.lower() for x in _todo_tasks):
