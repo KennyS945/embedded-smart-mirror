@@ -532,38 +532,44 @@ def voice_loop():
                         continue
                     
                     detected = False
+                    # Only check FINAL results for wake word (reduces false positives)
                     if wake_rec.AcceptWaveform(data):
-                        if "hey mirror" in json.loads(wake_rec.Result()).get("text", "").lower():
+                        result_text = json.loads(wake_rec.Result()).get("text", "").lower()
+                        print(f"[Wake] Final result: '{result_text}'")
+                        if "hey mirror" in result_text:
                             detected = True
-                    elif "hey mirror" in json.loads(wake_rec.PartialResult()).get("partial", "").lower():
-                        detected = True
 
                     if detected:
-                        print("[Wake] hey mirror detected")
+                        print("[Wake] hey mirror detected - entering listening mode")
                         post_ui_state("listening", "Listening...")
                         cmd_rec = KaldiRecognizer(model, SAMPLE_RATE)
                         heard_speech = silence_chunks = 0
-                        cmd_parts = []; chunk_limit = 40
+                        cmd_parts = []; chunk_limit = 80  # ~16 seconds max for command
                         state = "command"
 
                 elif state == "command":
                     if cmd_rec.AcceptWaveform(data):
                         t = json.loads(cmd_rec.Result()).get("text", "").strip()
                         if t:
+                            print(f"[Command] Partial result: '{t}'")
                             cmd_parts.append(t); heard_speech = True; silence_chunks = 0
                     else:
                         p = json.loads(cmd_rec.PartialResult()).get("partial", "").strip()
                         if p:
+                            print(f"[Command] Interim: '{p}'")
                             heard_speech = True; silence_chunks = 0
                         elif heard_speech:
                             silence_chunks += 1
                     chunk_limit -= 1
 
-                    if (heard_speech and silence_chunks >= 4) or chunk_limit <= 0:
+                    # Wait for 1.2 seconds of silence OR timeout after ~16 seconds
+                    if (heard_speech and silence_chunks >= 6) or chunk_limit <= 0:
                         final = json.loads(cmd_rec.FinalResult()).get("text", "").strip()
-                        if final: cmd_parts.append(final)
+                        if final: 
+                            print(f"[Command] Final segment: '{final}'")
+                            cmd_parts.append(final)
                         prompt = " ".join(p for p in cmd_parts if p).strip()
-                        print(f"[Command] {prompt}")
+                        print(f"[Command] Complete: {prompt}")
                         if prompt:
                             bg(fetch_ai_response, prompt)
                         else:
@@ -1108,7 +1114,7 @@ def main():
 
 
     dtw_card   = DateTimeWeatherCard(canvas, x=10,  y=10)
-    news_card  = NewsCard(canvas,            x=sw - 480, y=10)
+    news_card  = NewsCard(canvas,            x=510, y=10)
     stock_card = StocksCard(canvas,          x=10,  y=sh - 175)
     todo_card  = TodoCard(canvas,            x=WIDGET_PAD, y=todo_y, max_h=sh)
     ai_card    = AIResponseCard(canvas,      x=sw - 540,   y=sh - 240)
