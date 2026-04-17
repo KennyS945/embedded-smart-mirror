@@ -1129,7 +1129,7 @@ def main():
 
 
     dtw_card   = DateTimeWeatherCard(canvas, x=10,  y=10)
-    news_card  = NewsCard(canvas,            x=510, y=10)
+    news_card  = NewsCard(canvas,            x=sw - 480, y=10)
     stock_card = StocksCard(canvas,          x=10,  y=sh - 175)
     todo_card  = TodoCard(canvas,            x=WIDGET_PAD, y=todo_y, max_h=sh)
     ai_card    = AIResponseCard(canvas,      x=sw - 540,   y=sh - 240)
