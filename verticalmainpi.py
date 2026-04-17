@@ -167,8 +167,10 @@ def _todo_payload_is_meaningful(tb):
 def apply_todo_from_ai(todo_block):
     global _todo_tasks
     if not isinstance(todo_block, dict):
+        print(f"[Todo] Invalid todo block: {type(todo_block)}")
         return False
 
+    print(f"[Todo] Applying: {todo_block}")
     full_set = todo_block.get("set")
     if isinstance(full_set, list):
         _todo_tasks = [
@@ -178,17 +180,19 @@ def apply_todo_from_ai(todo_block):
         save_todos()
         if _todo_card_ref:
             _todo_card_ref.refresh_list()
+        print(f"[Todo] Set to {len(_todo_tasks)} items")
         return True
 
     changed = False
     if todo_block.get("clear") is True and _todo_tasks:
-        _todo_tasks = []; changed = True
+        _todo_tasks = []; changed = True; print("[Todo] Cleared")
 
     for v in (todo_block.get("remove_indices") or []):
         try:
             idx = int(v) - 1
             if 0 <= idx < len(_todo_tasks):
-                _todo_tasks.pop(idx); changed = True
+                removed = _todo_tasks.pop(idx); changed = True
+                print(f"[Todo] Removed index {v}: {removed['text']}")
         except (TypeError, ValueError):
             pass
 
@@ -196,18 +200,26 @@ def apply_todo_from_ai(todo_block):
         if isinstance(r, str) and r.strip():
             before = len(_todo_tasks)
             _todo_tasks = [x for x in _todo_tasks if x["text"].lower() != r.strip().lower()]
-            if len(_todo_tasks) < before: changed = True
+            if len(_todo_tasks) < before: 
+                changed = True
+                print(f"[Todo] Removed: {r}")
 
     for a in (todo_block.get("add") or []):
         if isinstance(a, str) and a.strip():
             t = a.strip()
             if not any(x["text"].lower() == t.lower() for x in _todo_tasks):
                 _todo_tasks.append({"id": uuid.uuid4().hex[:12], "text": t}); changed = True
+                print(f"[Todo] Added: {t}")
+            else:
+                print(f"[Todo] Already exists: {t}")
 
     if changed:
         save_todos()
         if _todo_card_ref:
             _todo_card_ref.refresh_list()
+        print(f"[Todo] Updated. Now {len(_todo_tasks)} items")
+    else:
+        print(f"[Todo] No changes made")
     return changed
 
 def get_todo_context_lines():
@@ -413,31 +425,31 @@ def fetch_ai_response(prompt):
             f"{get_mirror_context()}\n\nUser: {prompt}"
         )
         r = requests.post(
-            "https://api.openai.com/v1/responses",
+            "https://api.openai.com/v1/chat/completions",
             headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "gpt-4.1-mini", "input": full_input, "max_output_tokens": 480},
+            json={"model": "gpt-4-mini", "messages": [{"role": "user", "content": full_input}], "max_tokens": 480},
             timeout=30,
         )
         r.raise_for_status()
         data = r.json()
 
-        text = (data.get("output_text") or "").strip()
+        text = ""
+        if "choices" in data and isinstance(data["choices"], list) and len(data["choices"]) > 0:
+            choice = data["choices"][0]
+            if isinstance(choice.get("message"), dict):
+                text = (choice["message"].get("content") or "").strip()
         if not text:
-            parts = []
-            for item in data.get("output", []):
-                for content in item.get("content", []):
-                    if content.get("type") == "output_text":
-                        parts.append(content.get("text", "").strip())
-            text = "\n".join(parts).strip()
-        if not text:
-            text = f"No response. Keys: {list(data.keys())}"
+            text = f"No response from AI"
 
+        print(f"[AI] Raw response: {text[:200]}")
         parsed = _parse_ai_json(text)
         if parsed:
             msg    = parsed["message"]
             stocks = parsed["stocks"]
             vis    = parsed["visibility"]
             todo   = parsed["todo"]
+
+            print(f"[AI] Parsed - message: {msg[:50] if msg else None}, todo: {todo}, stocks: {stocks}, vis: {vis}")
 
             if isinstance(stocks, list) and len(stocks) == MAX_STOCK_SLOTS:
                 def _do_stocks():
@@ -450,15 +462,20 @@ def fetch_ai_response(prompt):
                 if _root_ref: _root_ref.after(0, lambda: apply_visibility(vis))
 
             if _todo_payload_is_meaningful(todo):
+                print(f"[AI] Todo is meaningful, applying...")
                 if _root_ref: _root_ref.after(0, lambda: apply_todo_from_ai(todo))
+            else:
+                print(f"[AI] Todo not meaningful: {todo}")
 
             display = msg or ("Watchlist updated." if stocks else
                               ("OK." if isinstance(vis, dict) and vis else
                                ("To-do updated." if _todo_payload_is_meaningful(todo) else text[:500])))
             post_ui_state("response", display)
         else:
+            print(f"[AI] Failed to parse JSON from: {text[:200]}")
             post_ui_state("response", text[:500])
     except Exception as e:
+        print(f"[AI] Exception: {e}")
         post_ui_state("error", f"AI Error: {e}")
 
 # ─────────────────────────────────────────────
@@ -581,6 +598,22 @@ def _set_ily_remaining(remaining):
     except (TypeError, ValueError):
         _ily_remaining = 0.0
 
+def _show_cursor():
+    """Show the mouse cursor."""
+    if _root_ref:
+        try:
+            _root_ref.config(cursor="arrow")
+        except Exception:
+            pass
+
+def _hide_cursor():
+    """Hide the mouse cursor."""
+    if _root_ref:
+        try:
+            _root_ref.config(cursor="none")
+        except Exception:
+            pass
+
 def ui_overlay_loop():
     """Main-thread loop: renders countdown without flooding Tk."""
     global _ily_label
@@ -656,6 +689,9 @@ def hand_tracking_loop():
     frame_count = 0
     last_tick   = 0.0
 
+    # Hide cursor initially (tracking starts disabled)
+    _hide_cursor()
+
     try:
         while _running and cap.isOpened():
             # Cap processing FPS (prevents pegging CPU on Pi)
@@ -709,6 +745,10 @@ def hand_tracking_loop():
                     ily_start = None
                     _set_ily_remaining(0)
                     print(f"[Hand] Tracking {'ON' if _tracking_enabled else 'OFF'}")
+                    if _tracking_enabled:
+                        _show_cursor()
+                    else:
+                        _hide_cursor()
                     if not _tracking_enabled and was_fist:
                         try: 
                             _mouse.release(Button.left)
@@ -750,6 +790,7 @@ def hand_tracking_loop():
         try: _mouse.release(Button.left)
         except Exception: pass
         _set_ily_remaining(0)
+        _show_cursor()  # Ensure cursor is visible on exit
         try: detector.close()
         except Exception: pass
         cap.release()
