@@ -502,6 +502,34 @@ def _audio_callback(indata, frames, time_info, status):
     _audio_queue.put(bytes(indata))
 
 # ─────────────────────────────────────────────
+# VOICE CORRECTION (fix common Vosk misrecognitions)
+# ─────────────────────────────────────────────
+def _correct_voice_input(text):
+    """Fix common speech-to-text misrecognitions from Vosk."""
+    if not text:
+        return text
+    
+    # Common misrecognitions mapping
+    corrections = {
+        "which it": "widget",
+        "which its": "widgets",
+        "ad widget": "add widget",
+        "ad the widget": "add the widget",
+        "remove which it": "remove widget",
+        "show which it": "show widget",
+        "hide which it": "hide widget",
+        "hide stocks": "hide stocks",  # Sometimes gets cut off
+    }
+    
+    lower_text = text.lower()
+    for wrong, correct in corrections.items():
+        if wrong in lower_text:
+            text = text.replace(wrong, correct)
+            print(f"[Voice] Corrected '{wrong}' → '{correct}'")
+    
+    return text
+
+# ─────────────────────────────────────────────
 # VOICE LOOP  (offline Vosk wake word)
 # ─────────────────────────────────────────────
 def voice_loop():
@@ -569,6 +597,8 @@ def voice_loop():
                             print(f"[Command] Final segment: '{final}'")
                             cmd_parts.append(final)
                         prompt = " ".join(p for p in cmd_parts if p).strip()
+                        # Apply voice corrections for common misrecognitions
+                        prompt = _correct_voice_input(prompt)
                         print(f"[Command] Complete: {prompt}")
                         if prompt:
                             bg(fetch_ai_response, prompt)
