@@ -20,6 +20,13 @@ from mediapipe.tasks.python import vision
 from pynput.mouse import Button, Controller as MouseController
 from vosk import Model, KaldiRecognizer
 
+import RPi.GPIO as GPIO 
+import subprocess
+
+
+
+    
+    
 load_dotenv()
 
 
@@ -1041,6 +1048,8 @@ def main():
     # Layout – sensible defaults for a 1920×1080 or similar Pi display
     todo_h = min(72 + TODO_MAX_VISIBLE * TODO_LINE_HEIGHT + 36, sh - 120)
     todo_y = max(WIDGET_PAD, (sh - int(todo_h)) // 2)
+    
+
 
     dtw_card   = DateTimeWeatherCard(canvas, x=10,  y=10)
     news_card  = NewsCard(canvas,            x=510, y=10)
