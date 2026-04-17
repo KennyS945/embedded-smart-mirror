@@ -187,7 +187,12 @@ def apply_todo_from_ai(todo_block):
     if todo_block.get("clear") is True and _todo_tasks:
         _todo_tasks = []; changed = True; print("[Todo] Cleared")
 
-    for v in (todo_block.get("remove_indices") or []):
+    # Handle "remove_indices" - ensure it's a list
+    remove_indices = todo_block.get("remove_indices") or []
+    if not isinstance(remove_indices, list):
+        remove_indices = [remove_indices]
+    
+    for v in remove_indices:
         try:
             idx = int(v) - 1
             if 0 <= idx < len(_todo_tasks):
@@ -196,7 +201,12 @@ def apply_todo_from_ai(todo_block):
         except (TypeError, ValueError):
             pass
 
-    for r in (todo_block.get("remove") or []):
+    # Handle "remove" - ensure it's a list
+    remove_items = todo_block.get("remove") or []
+    if isinstance(remove_items, str):  # If AI sends a single string instead of list
+        remove_items = [remove_items]
+    
+    for r in remove_items:
         if isinstance(r, str) and r.strip():
             before = len(_todo_tasks)
             _todo_tasks = [x for x in _todo_tasks if x["text"].lower() != r.strip().lower()]
@@ -204,7 +214,12 @@ def apply_todo_from_ai(todo_block):
                 changed = True
                 print(f"[Todo] Removed: {r}")
 
-    for a in (todo_block.get("add") or []):
+    # Handle "add" - ensure it's a list
+    add_items = todo_block.get("add") or []
+    if isinstance(add_items, str):  # If AI sends a single string instead of list
+        add_items = [add_items]
+    
+    for a in add_items:
         if isinstance(a, str) and a.strip():
             t = a.strip()
             if not any(x["text"].lower() == t.lower() for x in _todo_tasks):
