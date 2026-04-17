@@ -424,12 +424,14 @@ def fetch_ai_response(prompt):
             '{"message":"...","stocks":null,"visibility":null,"todo":null}\n\n'
             f"{get_mirror_context()}\n\nUser: {prompt}"
         )
+        print(f"[AI] Sending request with key: {OPENAI_API_KEY[:20]}...")
         r = requests.post(
             "https://api.openai.com/v1/chat/completions",
             headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "gpt-4-mini", "messages": [{"role": "user", "content": full_input}], "max_tokens": 480},
+            json={"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": full_input}], "max_tokens": 480},
             timeout=30,
         )
+        print(f"[AI] Response status: {r.status_code}")
         r.raise_for_status()
         data = r.json()
 
@@ -474,8 +476,21 @@ def fetch_ai_response(prompt):
         else:
             print(f"[AI] Failed to parse JSON from: {text[:200]}")
             post_ui_state("response", text[:500])
+    except requests.exceptions.HTTPError as e:
+        error_msg = str(e)
+        try:
+            if hasattr(e, 'response') and e.response is not None:
+                error_body = e.response.text
+                print(f"[AI] HTTP Error {e.response.status_code}: {error_body}")
+                error_msg = f"HTTP {e.response.status_code}: {error_body[:200]}"
+        except Exception:
+            pass
+        print(f"[AI] HTTPError Exception: {error_msg}")
+        post_ui_state("error", f"AI Error: {error_msg}")
     except Exception as e:
-        print(f"[AI] Exception: {e}")
+        print(f"[AI] Exception: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
         post_ui_state("error", f"AI Error: {e}")
 
 # ─────────────────────────────────────────────
@@ -1093,7 +1108,7 @@ def main():
 
 
     dtw_card   = DateTimeWeatherCard(canvas, x=10,  y=10)
-    news_card  = NewsCard(canvas,            x=510, y=10)
+    news_card  = NewsCard(canvas,            x=sw - 480, y=10)
     stock_card = StocksCard(canvas,          x=10,  y=sh - 175)
     todo_card  = TodoCard(canvas,            x=WIDGET_PAD, y=todo_y, max_h=sh)
     ai_card    = AIResponseCard(canvas,      x=sw - 540,   y=sh - 240)
