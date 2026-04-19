@@ -79,6 +79,9 @@ SMOOTHING_WINDOW      = 3       # reduced for faster response
 HAND_SKIP_FRAMES      = 1       # process every Nth frame (1 = every frame)
 ILY_HOLD_SECONDS      = 3.0
 HAND_MAX_FPS          = 30.0    # increased for responsiveness
+HAND_INACTIVITY_TIMEOUT = 10.0 # 10 seconds before auto disable 
+
+_last_hand_activity = 0.0 #timestamp of the last grab of widget or ily gesture 
 
 # ─────────────────────────────────────────────
 # GLOBAL STATE
@@ -777,6 +780,7 @@ def hand_tracking_loop():
             if is_ily:
                 if ily_start is None:
                     ily_start = time.time()
+                _last_hand_activity = time.time()
                 elapsed   = time.time() - ily_start
                 remaining = ILY_HOLD_SECONDS - elapsed
                 if elapsed >= ILY_HOLD_SECONDS:
@@ -804,6 +808,21 @@ def hand_tracking_loop():
                 if frame_count % 5 != 0:
                     continue 
                 #continue
+                
+            if _tracking_enabled:
+                if (time.time() - _last_hand_activity) > HAND_INACTIVITY_TIMEOUT:
+                    _tracking_enabled = False
+                    _hide_cursor()
+                    print("[Hand] Tracking Off (inactivity timeout)")
+                    if was_fist:
+                        try:
+                            _mouse.release(Button.left)
+                        except Exception:
+                            pass 
+                        was_fist = False
+                    continue
+                
+                
 
             palm    = lm[9]
             sx, sy  = int(palm.x * screen_w), int(palm.y * screen_h)
@@ -820,6 +839,7 @@ def hand_tracking_loop():
             try:
                 if is_fist and not was_fist:
                     _mouse.press(Button.left)
+                    _last_hand_activity = time.time()
                 elif not is_fist and was_fist:
                     _mouse.release(Button.left)
             except Exception:
