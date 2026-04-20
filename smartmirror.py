@@ -79,6 +79,9 @@ SMOOTHING_WINDOW      = 3       # reduced for faster response
 HAND_SKIP_FRAMES      = 1       # process every Nth frame (1 = every frame)
 ILY_HOLD_SECONDS      = 3.0
 HAND_MAX_FPS          = 30.0    # increased for responsiveness
+HAND_INACTIVITY_TIMEOUT = 30.0 # 10 seconds before auto disable 
+
+_last_hand_activity = 0.0 #timestamp of the last grab of widget or ily gesture 
 
 # ─────────────────────────────────────────────
 # GLOBAL STATE
@@ -112,6 +115,8 @@ _running          = True
 _position_buffer  = []
 _detection_result = None
 
+
+            
 # ─────────────────────────────────────────────
 # UTILITIES
 # ─────────────────────────────────────────────
@@ -693,7 +698,7 @@ def ui_overlay_loop():
 
 def hand_tracking_loop():
     global _tracking_enabled, _running
-
+    
     if not os.path.exists(HAND_MODEL_PATH):
         print(f"[Hand] Model not found: {HAND_MODEL_PATH}"); return
 
@@ -752,6 +757,7 @@ def hand_tracking_loop():
             mp_img   = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
             result = detector.detect(mp_img)
 
+
             if not result or not result.hand_landmarks:
                 if was_fist:
                     try: _mouse.release(Button.left)
@@ -774,6 +780,7 @@ def hand_tracking_loop():
             if is_ily:
                 if ily_start is None:
                     ily_start = time.time()
+                _last_hand_activity = time.time()
                 elapsed   = time.time() - ily_start
                 remaining = ILY_HOLD_SECONDS - elapsed
                 if elapsed >= ILY_HOLD_SECONDS:
@@ -798,9 +805,27 @@ def hand_tracking_loop():
                 _set_ily_remaining(0)
 
             if not _tracking_enabled:
-                continue
+                if frame_count % 5 != 0:
+                    continue 
+                #continue
+                
+            if _tracking_enabled:
+                if (time.time() - _last_hand_activity) > HAND_INACTIVITY_TIMEOUT:
+                    _tracking_enabled = False
+                    _hide_cursor()
+                    print("[Hand] Tracking Off (inactivity timeout)")
+                    if was_fist:
+                        try:
+                            _mouse.release(Button.left)
+                        except Exception:
+                            pass 
+                        was_fist = False
+                    continue
+                
+                
 
             palm    = lm[9]
+            sx, sy  = int(palm.x * screen_w), int(palm.y * screen_h)
             sx, sy  = int(palm.x * screen_w), int(palm.y * screen_h)
             mx, my  = _smooth(sx, sy)
             try:
@@ -814,6 +839,7 @@ def hand_tracking_loop():
             try:
                 if is_fist and not was_fist:
                     _mouse.press(Button.left)
+                    _last_hand_activity = time.time()
                 elif not is_fist and was_fist:
                     _mouse.release(Button.left)
             except Exception:
@@ -899,6 +925,9 @@ class DraggableCard(tk.Canvas):
 
     def _on_drag(self, e):
         pw, ph = self.master.winfo_width(), self.master.winfo_height()
+        
+        BUFFER = 10
+        
         nx = max(WIDGET_PAD, min(pw - self.card_w - WIDGET_PAD, self.winfo_x() + e.x - self._drag_ox))
         ny = max(WIDGET_PAD, min(ph - self.card_h - WIDGET_PAD, self.winfo_y() + e.y - self._drag_oy))
         nx, ny = self._resolve_collisions(nx, ny)
@@ -1126,12 +1155,12 @@ def main():
     todo_h = min(72 + TODO_MAX_VISIBLE * TODO_LINE_HEIGHT + 36, sh - 120)
     todo_y = max(WIDGET_PAD, (sh - int(todo_h)) // 2)
     
-
+    
 
     dtw_card   = DateTimeWeatherCard(canvas, x=10,  y=10)
     news_card  = NewsCard(canvas,            x=sw - 480, y=10)
-    stock_card = StocksCard(canvas,          x=10,  y=sh - 175)
-    todo_card  = TodoCard(canvas,            x=WIDGET_PAD, y=todo_y, max_h=sh)
+    stock_card = StocksCard(canvas,          x=10,  y=110)
+    todo_card  = TodoCard(canvas,            x=10, y=540, max_h= sh)
     ai_card    = AIResponseCard(canvas,      x=sw - 540,   y=sh - 240)
 
     _stock_card_ref = stock_card
