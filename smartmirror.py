@@ -11,7 +11,6 @@ from datetime import datetime
 
 import cv2
 import mediapipe as mp
-import numpy as np
 import requests
 import sounddevice as sd
 import yfinance as yf
@@ -19,7 +18,15 @@ from dotenv import load_dotenv
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 from pynput.mouse import Button, Controller as MouseController
+from vosk import Model, KaldiRecognizer
 
+import RPi.GPIO as GPIO 
+import subprocess
+
+
+
+    
+    
 load_dotenv()
 
 
@@ -57,27 +64,24 @@ TODO_LINE_HEIGHT      = 30
 TODO_MAX_VISIBLE      = 14
 TODO_CARD_WIDTH       = 340
 
-# Voice — faster-whisper (no wake word; see voice_loop)
-WHISPER_MODEL      = "tiny.en"
-WHISPER_DEVICE     = os.getenv("WHISPER_DEVICE", "cpu")
-WHISPER_COMPUTE    = os.getenv("WHISPER_COMPUTE", "int8")  # Pi: int8 or int8_float16
-WHISPER_DOWNLOAD   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "model.bin")
-SAMPLE_RATE        = 16000
-BLOCK_SIZE         = 3200  # ~0.2 s @ 16 kHz
-SPEECH_RMS_THRESH  = 380.0  # int16 RMS; lower if mic is quiet
-SILENCE_CHUNKS_END = 10 # consecutive quiet blocks to end utterance (~2 s with BLOCK_SIZE)
-MIN_UTTERANCE_SEC  = 0.45
-MAX_UTTERANCE_SEC  = 12.0
+# Voice  (Pi-friendly: smaller block size)
+VOSK_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vosk-model-small-en-us-0.15")
+SAMPLE_RATE     = 16000
+BLOCK_SIZE      = 3200          # ~0.2 s – lower latency on ARM
+WAKE_GRAMMAR    = json.dumps(["hey mirror", "[unk]"])
 
-# Hand tracking  (Pi-friendly settings)
+# Hand tracking  (Pi-friendly settings - optimized for speed)
 HAND_MODEL_PATH       = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hand_landmarker.task")
 CAMERA_ID             = 0
-FRAME_WIDTH           = 240     # lower res → less CPU
-FRAME_HEIGHT          = 180
-SMOOTHING_WINDOW      = 5
-HAND_SKIP_FRAMES      = 2       # process every Nth frame (1 = every frame)
+FRAME_WIDTH           = 320     # lower res → less CPU
+FRAME_HEIGHT          = 240
+SMOOTHING_WINDOW      = 3       # reduced for faster response
+HAND_SKIP_FRAMES      = 1       # process every Nth frame (1 = every frame)
 ILY_HOLD_SECONDS      = 3.0
-HAND_MAX_FPS          = 15.0    # cap processing rate to reduce CPU
+HAND_MAX_FPS          = 30.0    # increased for responsiveness
+HAND_INACTIVITY_TIMEOUT = 30.0 # 10 seconds before auto disable 
+
+_last_hand_activity = 0.0 #timestamp of the last grab of widget or ily gesture 
 
 # ─────────────────────────────────────────────
 # GLOBAL STATE
@@ -106,13 +110,13 @@ _widget_visibility = {
 
 # Hand tracking
 _mouse           = MouseController()
-_mouse.position = (10, 1079)
 _tracking_enabled = False
 _running          = True
 _position_buffer  = []
+_detection_result = None
 
-_whisper_model = None
 
+            
 # ─────────────────────────────────────────────
 # UTILITIES
 # ─────────────────────────────────────────────
@@ -168,8 +172,10 @@ def _todo_payload_is_meaningful(tb):
 def apply_todo_from_ai(todo_block):
     global _todo_tasks
     if not isinstance(todo_block, dict):
+        print(f"[Todo] Invalid todo block: {type(todo_block)}")
         return False
 
+    print(f"[Todo] Applying: {todo_block}")
     full_set = todo_block.get("set")
     if isinstance(full_set, list):
         _todo_tasks = [
@@ -179,36 +185,61 @@ def apply_todo_from_ai(todo_block):
         save_todos()
         if _todo_card_ref:
             _todo_card_ref.refresh_list()
+        print(f"[Todo] Set to {len(_todo_tasks)} items")
         return True
 
     changed = False
     if todo_block.get("clear") is True and _todo_tasks:
-        _todo_tasks = []; changed = True
+        _todo_tasks = []; changed = True; print("[Todo] Cleared")
 
-    for v in (todo_block.get("remove_indices") or []):
+    # Handle "remove_indices" - ensure it's a list
+    remove_indices = todo_block.get("remove_indices") or []
+    if not isinstance(remove_indices, list):
+        remove_indices = [remove_indices]
+    
+    for v in remove_indices:
         try:
             idx = int(v) - 1
             if 0 <= idx < len(_todo_tasks):
-                _todo_tasks.pop(idx); changed = True
+                removed = _todo_tasks.pop(idx); changed = True
+                print(f"[Todo] Removed index {v}: {removed['text']}")
         except (TypeError, ValueError):
             pass
 
-    for r in (todo_block.get("remove") or []):
+    # Handle "remove" - ensure it's a list
+    remove_items = todo_block.get("remove") or []
+    if isinstance(remove_items, str):  # If AI sends a single string instead of list
+        remove_items = [remove_items]
+    
+    for r in remove_items:
         if isinstance(r, str) and r.strip():
             before = len(_todo_tasks)
             _todo_tasks = [x for x in _todo_tasks if x["text"].lower() != r.strip().lower()]
-            if len(_todo_tasks) < before: changed = True
+            if len(_todo_tasks) < before: 
+                changed = True
+                print(f"[Todo] Removed: {r}")
 
-    for a in (todo_block.get("add") or []):
+    # Handle "add" - ensure it's a list
+    add_items = todo_block.get("add") or []
+    if isinstance(add_items, str):  # If AI sends a single string instead of list
+        add_items = [add_items]
+    
+    for a in add_items:
         if isinstance(a, str) and a.strip():
             t = a.strip()
             if not any(x["text"].lower() == t.lower() for x in _todo_tasks):
                 _todo_tasks.append({"id": uuid.uuid4().hex[:12], "text": t}); changed = True
+                print(f"[Todo] Added: {t}")
+            else:
+                print(f"[Todo] Already exists: {t}")
 
     if changed:
         save_todos()
         if _todo_card_ref:
             _todo_card_ref.refresh_list()
+        print(f"[Todo] Updated. Now {len(_todo_tasks)} items")
+    else:
+        print(f"[Todo] No changes made")
     return changed
 
 def get_todo_context_lines():
@@ -228,7 +259,7 @@ def fetch_weather():
     try:
         r = requests.get(
             "https://api.openweathermap.org/data/2.5/weather",
-            params={"q": "Syracuse,ny,usa", "appid": OPENWEATHER_API_KEY, "units": "imperial"},
+            params={"q": CITY, "appid": OPENWEATHER_API_KEY, "units": "imperial"},
             timeout=5,
         )
         data = r.json()
@@ -413,32 +444,34 @@ def fetch_ai_response(prompt):
             '{"message":"...","stocks":null,"visibility":null,"todo":null}\n\n'
             f"{get_mirror_context()}\n\nUser: {prompt}"
         )
+        print(f"[AI] Sending request with key: {OPENAI_API_KEY[:20]}...")
         r = requests.post(
-            "https://api.openai.com/v1/responses",
+            "https://api.openai.com/v1/chat/completions",
             headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "gpt-4.1-mini", "input": full_input, "max_output_tokens": 480},
+            json={"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": full_input}], "max_tokens": 480},
             timeout=30,
         )
+        print(f"[AI] Response status: {r.status_code}")
         r.raise_for_status()
         data = r.json()
 
-        text = (data.get("output_text") or "").strip()
+        text = ""
+        if "choices" in data and isinstance(data["choices"], list) and len(data["choices"]) > 0:
+            choice = data["choices"][0]
+            if isinstance(choice.get("message"), dict):
+                text = (choice["message"].get("content") or "").strip()
         if not text:
-            parts = []
-            for item in data.get("output", []):
-                for content in item.get("content", []):
-                    if content.get("type") == "output_text":
-                        parts.append(content.get("text", "").strip())
-            text = "\n".join(parts).strip()
-        if not text:
-            text = f"No response. Keys: {list(data.keys())}"
+            text = f"No response from AI"
 
+        print(f"[AI] Raw response: {text[:200]}")
         parsed = _parse_ai_json(text)
         if parsed:
             msg    = parsed["message"]
             stocks = parsed["stocks"]
             vis    = parsed["visibility"]
             todo   = parsed["todo"]
+
+            print(f"[AI] Parsed - message: {msg[:50] if msg else None}, todo: {todo}, stocks: {stocks}, vis: {vis}")
 
             if isinstance(stocks, list) and len(stocks) == MAX_STOCK_SLOTS:
                 def _do_stocks():
@@ -451,15 +484,33 @@ def fetch_ai_response(prompt):
                 if _root_ref: _root_ref.after(0, lambda: apply_visibility(vis))
 
             if _todo_payload_is_meaningful(todo):
+                print(f"[AI] Todo is meaningful, applying...")
                 if _root_ref: _root_ref.after(0, lambda: apply_todo_from_ai(todo))
+            else:
+                print(f"[AI] Todo not meaningful: {todo}")
 
             display = msg or ("Watchlist updated." if stocks else
                               ("OK." if isinstance(vis, dict) and vis else
                                ("To-do updated." if _todo_payload_is_meaningful(todo) else text[:500])))
             post_ui_state("response", display)
         else:
+            print(f"[AI] Failed to parse JSON from: {text[:200]}")
             post_ui_state("response", text[:500])
+    except requests.exceptions.HTTPError as e:
+        error_msg = str(e)
+        try:
+            if hasattr(e, 'response') and e.response is not None:
+                error_body = e.response.text
+                print(f"[AI] HTTP Error {e.response.status_code}: {error_body}")
+                error_msg = f"HTTP {e.response.status_code}: {error_body[:200]}"
+        except Exception:
+            pass
+        print(f"[AI] HTTPError Exception: {error_msg}")
+        post_ui_state("error", f"AI Error: {error_msg}")
     except Exception as e:
+        print(f"[AI] Exception: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
         post_ui_state("error", f"AI Error: {e}")
 
 # ─────────────────────────────────────────────
@@ -470,121 +521,83 @@ def _audio_callback(indata, frames, time_info, status):
         print(f"[Audio] {status}")
     _audio_queue.put(bytes(indata))
 
-
-def _pcm_rms(int16_bytes):
-    if not int16_bytes:
-        return 0.0
-    x = np.frombuffer(int16_bytes, dtype=np.int16)
-    if x.size == 0:
-        return 0.0
-    return float(np.sqrt(np.mean(x.astype(np.float64) ** 2)))
-
-
-def _get_whisper():
-    global _whisper_model
-    if _whisper_model is None:
-        from faster_whisper import WhisperModel
-
-        os.makedirs(WHISPER_DOWNLOAD, exist_ok=True)
-        _whisper_model = WhisperModel(
-            WHISPER_MODEL,
-            device=WHISPER_DEVICE,
-            compute_type=WHISPER_COMPUTE,
-            download_root=WHISPER_DOWNLOAD,
-        )
-    return _whisper_model
-
-
-def _transcribe_pcm(int16_bytes):
-    if not int16_bytes:
-        return ""
-    samples = len(int16_bytes) // 2
-    if samples < int(MIN_UTTERANCE_SEC * SAMPLE_RATE):
-        return ""
-    audio = np.frombuffer(int16_bytes, dtype=np.int16).astype(np.float32) / 32768.0
-    model = _get_whisper()
-    segments, _info = model.transcribe(
-        audio,
-        language="en",
-        beam_size=1,
-        vad_filter=True,
-        without_timestamps=True,
-    )
-    parts = [s.text.strip() for s in segments if s.text]
-    return " ".join(parts).strip()
-
-
 # ─────────────────────────────────────────────
-# VOICE LOOP  (faster-whisper tiny.en — no wake word)
+# VOICE LOOP  (offline Vosk wake word)
 # ─────────────────────────────────────────────
 def voice_loop():
-    """Stream mic → utterance on silence; transcribe with Whisper. Disabled while hand control is on."""
-    post_ui_state("idle", "")
-    utter_buf = bytearray()
-    silence_run = 0
-    in_utterance = False
-
+    if not os.path.exists(VOSK_MODEL_PATH):
+        post_ui_state("error", f"Vosk model not found:\n{VOSK_MODEL_PATH}"); return
     try:
+        model    = Model(VOSK_MODEL_PATH)
+        wake_rec = KaldiRecognizer(model, SAMPLE_RATE, WAKE_GRAMMAR)
+        post_ui_state("idle", "")
+
         with sd.RawInputStream(
-            samplerate=SAMPLE_RATE,
-            blocksize=BLOCK_SIZE,
-            dtype="int16",
-            channels=1,
-            callback=_audio_callback,
+            samplerate=SAMPLE_RATE, blocksize=BLOCK_SIZE,
+            dtype="int16", channels=1, callback=_audio_callback,
         ):
+            state = "wake"
+            cmd_rec = None
+            heard_speech = False
+            silence_chunks = 0
+            cmd_parts = []
+            chunk_limit = 40
+
             while _running:
-                # Hand control on: no wake, no listening, no transcription
-                if _tracking_enabled:
-                    try:
-                        while True:
-                            _audio_queue.get_nowait()
-                    except queue.Empty:
-                        pass
-                    time.sleep(0.05)
-                    utter_buf.clear()
-                    silence_run = 0
-                    in_utterance = False
-                    continue
+                data = _audio_queue.get()
 
-                try:
-                    data = _audio_queue.get(timeout=0.2)
-                except queue.Empty:
-                    continue
+                if state == "wake":
+                    # ONLY FEATURE: Disable voice when hand control is on
+                    if _tracking_enabled:
+                        continue
+                    
+                    detected = False
+                    # Only check FINAL results for wake word (reduces false positives)
+                    if wake_rec.AcceptWaveform(data):
+                        result_text = json.loads(wake_rec.Result()).get("text", "").lower()
+                        print(f"[Wake] Final result: '{result_text}'")
+                        if "hey mirror" in result_text:
+                            detected = True
 
-                rms = _pcm_rms(data)
-                if rms >= SPEECH_RMS_THRESH:
-                    in_utterance = True
-                    silence_run = 0
-                    utter_buf.extend(data)
-                    max_bytes = int(MAX_UTTERANCE_SEC * SAMPLE_RATE * 2)
-                    if len(utter_buf) > max_bytes:
-                        text = _transcribe_pcm(bytes(utter_buf))
-                        utter_buf.clear()
-                        in_utterance = False
-                        silence_run = 0
-                        if text:
-                            print(f"[Voice] {text}")
-                            post_ui_state("listening", "Listening...")
-                            bg(fetch_ai_response, text)
+                    if detected:
+                        print("[Wake] hey mirror detected - entering listening mode")
+                        post_ui_state("listening", "Listening...")
+                        cmd_rec = KaldiRecognizer(model, SAMPLE_RATE)
+                        heard_speech = silence_chunks = 0
+                        cmd_parts = []; chunk_limit = 80  # ~16 seconds max for command
+                        state = "command"
+
+                elif state == "command":
+                    if cmd_rec.AcceptWaveform(data):
+                        t = json.loads(cmd_rec.Result()).get("text", "").strip()
+                        if t:
+                            print(f"[Command] Partial result: '{t}'")
+                            cmd_parts.append(t); heard_speech = True; silence_chunks = 0
+                    else:
+                        p = json.loads(cmd_rec.PartialResult()).get("partial", "").strip()
+                        if p:
+                            print(f"[Command] Interim: '{p}'")
+                            heard_speech = True; silence_chunks = 0
+                        elif heard_speech:
+                            silence_chunks += 1
+                    chunk_limit -= 1
+
+                    # Wait for 1.2 seconds of silence OR timeout after ~16 seconds
+                    if (heard_speech and silence_chunks >= 6) or chunk_limit <= 0:
+                        final = json.loads(cmd_rec.FinalResult()).get("text", "").strip()
+                        if final: 
+                            print(f"[Command] Final segment: '{final}'")
+                            cmd_parts.append(final)
+                        prompt = " ".join(p for p in cmd_parts if p).strip()
+                        print(f"[Command] Complete: {prompt}")
+                        if prompt:
+                            bg(fetch_ai_response, prompt)
                         else:
                             post_ui_state("idle", "")
-                else:
-                    if in_utterance:
-                        utter_buf.extend(data)
-                        silence_run += 1
-                        if silence_run >= SILENCE_CHUNKS_END:
-                            text = _transcribe_pcm(bytes(utter_buf))
-                            utter_buf.clear()
-                            in_utterance = False
-                            silence_run = 0
-                            if text:
-                                print(f"[Voice] {text}")
-                                post_ui_state("listening", "Listening...")
-                                bg(fetch_ai_response, text)
-                            else:
-                                post_ui_state("idle", "")
-                    else:
-                        silence_run = 0
+                        wake_rec = KaldiRecognizer(model, SAMPLE_RATE, WAKE_GRAMMAR)
+                        state = "wake"; cmd_rec = None
+                        heard_speech = silence_chunks = 0
+                        cmd_parts = []; chunk_limit = 40
     except Exception as e:
         post_ui_state("error", f"Voice Error: {e}")
 
@@ -603,11 +616,19 @@ def _get_screen_size():
         return 1920, 1080
 
 def _smooth(x, y):
+    """Optimized smoothing with weighted average for faster response"""
     _position_buffer.append((x, y))
     if len(_position_buffer) > SMOOTHING_WINDOW:
         _position_buffer.pop(0)
-    ax = int(sum(px for px, _ in _position_buffer) / len(_position_buffer))
-    ay = int(sum(py for _, py in _position_buffer) / len(_position_buffer))
+    
+    if len(_position_buffer) == 1:
+        return x, y
+    
+    # Weighted moving average - recent positions get more weight
+    weights = [i + 1 for i in range(len(_position_buffer))]
+    total_weight = sum(weights)
+    ax = int(sum(px * w for (px, _), w in zip(_position_buffer, weights)) / total_weight)
+    ay = int(sum(py * w for (_, py), w in zip(_position_buffer, weights)) / total_weight)
     return ax, ay
 
 def _set_ily_remaining(remaining):
@@ -617,6 +638,22 @@ def _set_ily_remaining(remaining):
         _ily_remaining = float(remaining)
     except (TypeError, ValueError):
         _ily_remaining = 0.0
+
+def _show_cursor():
+    """Show the mouse cursor."""
+    if _root_ref:
+        try:
+            _root_ref.config(cursor="arrow")
+        except Exception:
+            pass
+
+def _hide_cursor():
+    """Hide the mouse cursor."""
+    if _root_ref:
+        try:
+            _root_ref.config(cursor="none")
+        except Exception:
+            pass
 
 def ui_overlay_loop():
     """Main-thread loop: renders countdown without flooding Tk."""
@@ -657,11 +694,11 @@ def ui_overlay_loop():
          
 
     # ~10 FPS UI overlay updates (lightweight)
-    _root_ref.after(100, ui_overlay_loop)
+    _root_ref.after(33, ui_overlay_loop)
 
 def hand_tracking_loop():
     global _tracking_enabled, _running
-
+    
     if not os.path.exists(HAND_MODEL_PATH):
         print(f"[Hand] Model not found: {HAND_MODEL_PATH}"); return
 
@@ -680,9 +717,9 @@ def hand_tracking_loop():
                 base_options=python.BaseOptions(model_asset_path=HAND_MODEL_PATH),
                 running_mode=vision.RunningMode.IMAGE,
                 num_hands=1,
-                min_hand_detection_confidence=0.45,   # slightly relaxed for Pi
-                min_hand_presence_confidence=0.45,
-                min_tracking_confidence=0.45,
+                min_hand_detection_confidence=0.3,   # optimized for Pi
+                min_hand_presence_confidence=0.3,
+                min_tracking_confidence=0.3,
             )
         )
     except Exception as e:
@@ -693,16 +730,16 @@ def hand_tracking_loop():
     frame_count = 0
     last_tick   = 0.0
 
+    # Hide cursor initially (tracking starts disabled)
+    _hide_cursor()
+
     try:
         while _running and cap.isOpened():
             # Cap processing FPS (prevents pegging CPU on Pi)
             now = time.time()
             min_dt = 1.0 / max(HAND_MAX_FPS, 1.0)
-            elapsed = now - last_tick if last_tick else min_dt
-            if elapsed < min_dt:
-                time.sleep(min_dt - elapsed)
-            #if last_tick and (now - last_tick) < min_dt:
-             #   time.sleep(max(0.0, min_dt - (now - last_tick)))
+            if last_tick and (now - last_tick) < min_dt:
+                time.sleep(max(0.0, min_dt - (now - last_tick)))
             last_tick = time.time()
 
             # Cheap skip: grab (no decode) on skipped frames
@@ -719,6 +756,7 @@ def hand_tracking_loop():
             rgb      = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             mp_img   = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
             result = detector.detect(mp_img)
+
 
             if not result or not result.hand_landmarks:
                 if was_fist:
@@ -742,6 +780,7 @@ def hand_tracking_loop():
             if is_ily:
                 if ily_start is None:
                     ily_start = time.time()
+                _last_hand_activity = time.time()
                 elapsed   = time.time() - ily_start
                 remaining = ILY_HOLD_SECONDS - elapsed
                 if elapsed >= ILY_HOLD_SECONDS:
@@ -749,6 +788,10 @@ def hand_tracking_loop():
                     ily_start = None
                     _set_ily_remaining(0)
                     print(f"[Hand] Tracking {'ON' if _tracking_enabled else 'OFF'}")
+                    if _tracking_enabled:
+                        _show_cursor()
+                    else:
+                        _hide_cursor()
                     if not _tracking_enabled and was_fist:
                         try: 
                             _mouse.release(Button.left)
@@ -762,10 +805,27 @@ def hand_tracking_loop():
                 _set_ily_remaining(0)
 
             if not _tracking_enabled:
-                _mouse.position = (10, 1079)
-                continue
+                if frame_count % 5 != 0:
+                    continue 
+                #continue
+                
+            if _tracking_enabled:
+                if (time.time() - _last_hand_activity) > HAND_INACTIVITY_TIMEOUT:
+                    _tracking_enabled = False
+                    _hide_cursor()
+                    print("[Hand] Tracking Off (inactivity timeout)")
+                    if was_fist:
+                        try:
+                            _mouse.release(Button.left)
+                        except Exception:
+                            pass 
+                        was_fist = False
+                    continue
+                
+                
 
             palm    = lm[9]
+            sx, sy  = int(palm.x * screen_w), int(palm.y * screen_h)
             sx, sy  = int(palm.x * screen_w), int(palm.y * screen_h)
             mx, my  = _smooth(sx, sy)
             try:
@@ -779,6 +839,7 @@ def hand_tracking_loop():
             try:
                 if is_fist and not was_fist:
                     _mouse.press(Button.left)
+                    _last_hand_activity = time.time()
                 elif not is_fist and was_fist:
                     _mouse.release(Button.left)
             except Exception:
@@ -791,6 +852,7 @@ def hand_tracking_loop():
         try: _mouse.release(Button.left)
         except Exception: pass
         _set_ily_remaining(0)
+        _show_cursor()  # Ensure cursor is visible on exit
         try: detector.close()
         except Exception: pass
         cap.release()
@@ -863,6 +925,9 @@ class DraggableCard(tk.Canvas):
 
     def _on_drag(self, e):
         pw, ph = self.master.winfo_width(), self.master.winfo_height()
+        
+        BUFFER = 10
+        
         nx = max(WIDGET_PAD, min(pw - self.card_w - WIDGET_PAD, self.winfo_x() + e.x - self._drag_ox))
         ny = max(WIDGET_PAD, min(ph - self.card_h - WIDGET_PAD, self.winfo_y() + e.y - self._drag_oy))
         nx, ny = self._resolve_collisions(nx, ny)
@@ -1085,16 +1150,17 @@ def main():
 
     canvas = tk.Frame(root, bg=BG_COLOR)
     canvas.pack(fill="both", expand=True)
-    
 
     # Layout – sensible defaults for a 1920×1080 or similar Pi display
     todo_h = min(72 + TODO_MAX_VISIBLE * TODO_LINE_HEIGHT + 36, sh - 120)
     todo_y = max(WIDGET_PAD, (sh - int(todo_h)) // 2)
+    
+    
 
     dtw_card   = DateTimeWeatherCard(canvas, x=10,  y=10)
-    news_card  = NewsCard(canvas,            x=510, y=10)
-    stock_card = StocksCard(canvas,          x=10,  y=sh - 175)
-    todo_card  = TodoCard(canvas,            x=WIDGET_PAD, y=todo_y, max_h=sh)
+    news_card  = NewsCard(canvas,            x=sw - 480, y=10)
+    stock_card = StocksCard(canvas,          x=10,  y=110)
+    todo_card  = TodoCard(canvas,            x=10, y=540, max_h= sh)
     ai_card    = AIResponseCard(canvas,      x=sw - 540,   y=sh - 240)
 
     _stock_card_ref = stock_card
