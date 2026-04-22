@@ -64,10 +64,10 @@ TODO_LINE_HEIGHT      = 30
 TODO_MAX_VISIBLE      = 14
 TODO_CARD_WIDTH       = 340
 
-# Voice  (Pi-friendly: smaller block size)
+# Voice  (Pi 5 optimized: balanced for recognition accuracy & responsiveness)
 VOSK_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vosk-model-small-en-us-0.15")
 SAMPLE_RATE     = 16000
-BLOCK_SIZE      = 3200          # ~0.2 s – lower latency on ARM
+BLOCK_SIZE      = 4800          # ~0.3s – better recognition on Pi 5 with minimal latency
 WAKE_GRAMMAR    = json.dumps(["hey mirror", "[unk]"])
 
 # Hand tracking  (Pi-friendly settings - optimized for speed)
@@ -281,6 +281,10 @@ def fetch_news():
         articles = r.json().get("articles", [])
         results = []
         for a in articles:
+            # Skip articles without title
+            title = (a.get("title") or "").strip()
+            if not title or title.lower() == "[removed]":
+                continue
             pub_str = ""
             try:
                 dt = datetime.strptime(a.get("publishedAt", ""), "%Y-%m-%dT%H:%M:%SZ")
@@ -288,7 +292,7 @@ def fetch_news():
             except Exception:
                 pass
             results.append({
-                "title":       a.get("title", "No title"),
+                "title":       title,
                 "source":      a.get("source", {}).get("name", ""),
                 "pub":         pub_str,
                 "description": (a.get("description") or "").strip(),
@@ -544,20 +548,28 @@ def voice_loop():
             chunk_limit = 40
 
             while _running:
-                data = _audio_queue.get()
+                try:
+                    data = _audio_queue.get(timeout=1)
+                except Exception:
+                    # Queue timeout - continue waiting
+                    continue
 
                 if state == "wake":
-                    # ONLY FEATURE: Disable voice when hand control is on
+                    # Disable voice when hand control is on
                     if _tracking_enabled:
                         continue
                     
                     detected = False
-                    # Only check FINAL results for wake word (reduces false positives)
-                    if wake_rec.AcceptWaveform(data):
-                        result_text = json.loads(wake_rec.Result()).get("text", "").lower()
-                        print(f"[Wake] Final result: '{result_text}'")
-                        if "hey mirror" in result_text:
-                            detected = True
+                    try:
+                        # Check FINAL results for wake word (reduces false positives)
+                        if wake_rec.AcceptWaveform(data):
+                            result_json = json.loads(wake_rec.Result())
+                            result_text = result_json.get("text", "").lower().strip()
+                            print(f"[Wake] Final result: '{result_text}'")
+                            if "hey mirror" in result_text:
+                                detected = True
+                    except json.JSONDecodeError:
+                        pass
 
                     if detected:
                         print("[Wake] hey mirror detected - entering listening mode")
@@ -568,23 +580,35 @@ def voice_loop():
                         state = "command"
 
                 elif state == "command":
-                    if cmd_rec.AcceptWaveform(data):
-                        t = json.loads(cmd_rec.Result()).get("text", "").strip()
-                        if t:
-                            print(f"[Command] Partial result: '{t}'")
-                            cmd_parts.append(t); heard_speech = True; silence_chunks = 0
-                    else:
-                        p = json.loads(cmd_rec.PartialResult()).get("partial", "").strip()
-                        if p:
-                            print(f"[Command] Interim: '{p}'")
-                            heard_speech = True; silence_chunks = 0
-                        elif heard_speech:
+                    try:
+                        if cmd_rec.AcceptWaveform(data):
+                            result_json = json.loads(cmd_rec.Result())
+                            t = result_json.get("text", "").strip()
+                            if t:
+                                print(f"[Command] Partial result: '{t}'")
+                                cmd_parts.append(t); heard_speech = True; silence_chunks = 0
+                        else:
+                            partial_json = json.loads(cmd_rec.PartialResult())
+                            p = partial_json.get("partial", "").strip()
+                            if p:
+                                print(f"[Command] Interim: '{p}'")
+                                heard_speech = True; silence_chunks = 0
+                            elif heard_speech:
+                                silence_chunks += 1
+                    except json.JSONDecodeError:
+                        if heard_speech:
                             silence_chunks += 1
+                    
                     chunk_limit -= 1
 
                     # Wait for 1.2 seconds of silence OR timeout after ~16 seconds
                     if (heard_speech and silence_chunks >= 6) or chunk_limit <= 0:
-                        final = json.loads(cmd_rec.FinalResult()).get("text", "").strip()
+                        try:
+                            final_json = json.loads(cmd_rec.FinalResult())
+                            final = final_json.get("text", "").strip()
+                        except json.JSONDecodeError:
+                            final = ""
+                        
                         if final: 
                             print(f"[Command] Final segment: '{final}'")
                             cmd_parts.append(final)
@@ -912,11 +936,12 @@ class DraggableCard(tk.Canvas):
                 self.place(x=self._mirror_place[0], y=self._mirror_place[1])
         else:
             try:
+                # Save position BEFORE hiding
                 if self.winfo_manager():
                     self._mirror_place = (self.winfo_x(), self.winfo_y())
+                    self.place_forget()
             except tk.TclError:
-                pass
-            self.place_forget()
+                self.place_forget()
 
     def _on_press(self, e):
         self._drag_ox, self._drag_oy = e.x, e.y
@@ -1008,13 +1033,27 @@ class NewsCard(DraggableCard):
         self.after(NEWS_REFRESH_MS, self._sched_news)
 
     def _cycle(self):
-        if _news_cache:
+        if _news_cache and len(_news_cache) > 0:
             self._idx %= len(_news_cache)
             item = _news_cache[self._idx]
-            self.itemconfig(self._src_id, text=item["source"])
-            self.itemconfig(self._pub_id, text=item["pub"])
-            self.itemconfig(self._hdl_id, text=item["title"])
-            self._idx += 1
+            # Validate article has required fields
+            if item and isinstance(item, dict):
+                src = item.get("source", "")
+                pub = item.get("pub", "")
+                title = item.get("title", "No title")
+                # Only update if fields exist
+                if src or pub or title:
+                    self.itemconfig(self._src_id, text=src)
+                    self.itemconfig(self._pub_id, text=pub)
+                    self.itemconfig(self._hdl_id, text=title)
+                    self._idx += 1
+                else:
+                    # Skip invalid article
+                    self._idx += 1
+            else:
+                self._idx += 1
+        else:
+            self._idx = 0
         self.after(NEWS_CYCLE_MS, self._cycle)
 
 
